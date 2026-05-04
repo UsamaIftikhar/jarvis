@@ -1,0 +1,17 @@
+[package]
+name = "jarvis-desktop"
+version = "0.5.0"
+description = "JARVIS desktop shell (Tauri v2)"
+authors = ["JARVIS"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true

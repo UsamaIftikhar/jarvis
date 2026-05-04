@@ -1,0 +1,60 @@
+# --- Root monorepo: keep GitHub to source + config only ---
+
+# Dependencies & package stores (often 10k+ files each)
+node_modules/
+.pnpm-store/
+**/.pnpm-store/
+
+# Python
+.venv/
+venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+pip-wheel-metadata/
+
+# Next.js / frontend build
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts.tmp
+
+# Rust / Tauri (desktop)
+desktop/src-tauri/target/
+
+# Environment & secrets (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
+# Local / generated data (large)
+**/chroma_db/
+**/data/chroma/
+*.sqlite3
+
+# Logs & OS junk
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE (optional)
+.idea/
+
+# Test / coverage
+coverage/
+.nyc_output/
+htmlcov/
+
+# Misc caches
+.cache/
+.parcel-cache/

@@ -1,0 +1,13 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.env
+.env.local
+*.log
+chroma_db/
+data/
+models/
+.DS_Store

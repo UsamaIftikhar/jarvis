@@ -1,0 +1,177 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --jarvis-bg:   #0a0a0f;
+  --jarvis-blue: #00d4ff;
+  --jarvis-cyan: #00ffff;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--jarvis-bg);
+  color: #c9f0ff;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  font-family: var(--font-rajdhani), system-ui, sans-serif;
+}
+
+body {
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(0, 212, 255, 0.07) 0%, transparent 55%),
+    var(--jarvis-bg);
+}
+
+::-webkit-scrollbar { display: none; }
+
+/* ------------------------------------------------------------------ */
+/* HUD bracket (corner decoration)                                     */
+/* ------------------------------------------------------------------ */
+.hud-bracket { position: relative; }
+
+.hud-bracket::before,
+.hud-bracket::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: var(--jarvis-blue);
+  border-style: solid;
+  border-width: 0;
+  opacity: 0.7;
+}
+.hud-bracket::before {
+  top: 0; left: 0;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.hud-bracket::after {
+  bottom: 0; right: 0;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* Full 4-corner bracket variant */
+.hud-bracket-full {
+  position: relative;
+}
+.hud-bracket-full::before,
+.hud-bracket-full::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: var(--jarvis-blue);
+  border-style: solid;
+  border-width: 0;
+  opacity: 0.6;
+}
+.hud-bracket-full::before {
+  top: 0; left: 0;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.hud-bracket-full::after {
+  bottom: 0; right: 0;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* ------------------------------------------------------------------ */
+/* CRT scanlines                                                        */
+/* ------------------------------------------------------------------ */
+.scanlines {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 212, 255, 0.025) 0px,
+    rgba(0, 212, 255, 0.025) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Moving scan beam                                                     */
+/* ------------------------------------------------------------------ */
+.scan-beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(0, 212, 255, 0.0) 20%,
+    rgba(0, 212, 255, 0.35) 50%,
+    rgba(0, 212, 255, 0.0) 80%,
+    transparent 100%
+  );
+  animation: scan-beam 8s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes scan-beam {
+  0%   { top: -2px; opacity: 0; }
+  5%   { opacity: 1; }
+  95%  { opacity: 1; }
+  100% { top: 100vh; opacity: 0; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Glitch / flicker                                                     */
+/* ------------------------------------------------------------------ */
+@keyframes flicker {
+  0%, 94%, 100% { opacity: 1; }
+  95% { opacity: 0.35; }
+  96% { opacity: 0.85; }
+  97% { opacity: 0.55; }
+  98% { opacity: 0.9; }
+  99% { opacity: 0.7; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Glow text utilities                                                  */
+/* ------------------------------------------------------------------ */
+.glow-blue  { text-shadow: 0 0 8px rgba(0, 212, 255, 0.9),  0 0 20px rgba(0, 212, 255, 0.4); }
+.glow-cyan  { text-shadow: 0 0 8px rgba(0, 255, 255, 0.9),  0 0 24px rgba(0, 255, 255, 0.45); }
+.glow-red   { text-shadow: 0 0 8px rgba(255, 58, 85, 0.9),  0 0 20px rgba(255, 58, 85, 0.4); }
+
+/* ------------------------------------------------------------------ */
+/* Animated typing cursor                                               */
+/* ------------------------------------------------------------------ */
+.typing-cursor::after {
+  content: "▋";
+  animation: blink-cursor 0.8s step-end infinite;
+  opacity: 0.8;
+  color: var(--jarvis-cyan);
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 0.8; }
+  50%       { opacity: 0; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Pulsing dot                                                          */
+/* ------------------------------------------------------------------ */
+.pulse-dot {
+  border-radius: 50%;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.6); transform: scale(1); }
+  50%       { box-shadow: 0 0 0 4px rgba(0, 212, 255, 0); transform: scale(1.15); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Side panel divider line                                             */
+/* ------------------------------------------------------------------ */
+.hud-divider {
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(0, 212, 255, 0.3), transparent);
+}

@@ -1,0 +1,20 @@
+---
+description: Never modify macOS Clock alarm code unless the user explicitly asks to change alarms
+alwaysApply: true
+---
+
+# Alarm logic is frozen
+
+Do **not** change anything related to **alarms** (Clock.app / `mobiletimerd`) unless the user **explicitly** asks to modify alarm behavior in that message.
+
+This includes and is not limited to:
+
+- In `backend/tools.py`: `_set_alarm`, `_write_mt_alarm`, `_parse_alarm_time`, `_extract_clock_hm`, `_local_now` when used for alarms, `_cancel_alarm`, `_cancel_all_alarms`, `_restart_mobiletimerd`, `_read_mt_alarms`, `_list_alarms`, `_reminder_alarm_fallback`, weekday/bitmask constants used by alarms (`_DAY_BITS`, `_DAY_NAMES_PATTERN`, repeat masks), and the **tool definitions / `run_tool` branches** for `set_alarm`, `list_alarms`, and `cancel_alarm`.
+- In `backend/agent_loop.py`: `TOOL_HELP` lines for those alarm tools.
+- Any other file that only exists to support the above alarm flows.
+
+**Allowed without asking:** bugfixes **only** if the user reports a specific alarm bug and asks you to fix **that** bug (still touch only the minimum lines needed).
+
+**Not allowed:** refactors, cleanups, “while we’re here” edits, reminder/timezone tweaks inside alarm paths, or mixing alarm changes with unrelated tasks—unless the user clearly requested alarm changes.
+
+If work could affect alarms, implement it **outside** alarm helpers (e.g. reminders-only helpers in separate functions).

@@ -1,0 +1,57 @@
+[project]
+name = "jarvis-backend"
+version = "0.1.0"
+description = "FastAPI backend for the JARVIS voice assistant."
+requires-python = ">=3.11,<3.13"
+
+# Phase 1 only needs the web stack. STT/LLM/TTS/memory deps will be added
+# in their respective phases so installs stay fast and reproducible.
+dependencies = [
+    "fastapi>=0.115.0,<0.116",
+    "uvicorn[standard]>=0.32.0,<0.33",
+    "websockets>=13.1,<14",
+    "pydantic>=2.9.0,<3",
+    "python-dotenv>=1.0.1,<2",
+    "httpx>=0.27.2,<0.28",
+    "apscheduler>=3.10.4,<4",
+    "numpy>=1.26.0,<3",
+    "piper-tts>=1.4.2",
+    "anthropic>=0.97.0",
+]
+
+[project.optional-dependencies]
+# Phase 3
+voice = [
+    "faster-whisper>=1.0.3,<2",
+    "soundfile>=0.12.1,<0.13",
+]
+# Phase 5 (Chroma + local .ics calendar)
+memory = [
+    "chromadb>=0.5.15,<0.6",
+    "sentence-transformers>=3.1.1,<4",
+    "icalendar>=5.0.11,<6",
+]
+
+dev = [
+    "ruff>=0.6.9,<0.7",
+    "mypy>=1.11.2,<2",
+    "pytest>=8.3.3,<9",
+    "pytest-asyncio>=0.24.0,<0.25",
+]
+
+# This is a script-style project (run `uvicorn main:app`); no package build needed.
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ANN", "RUF"]
+ignore = ["ANN101", "ANN102"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
