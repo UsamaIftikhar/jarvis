@@ -56,7 +56,8 @@ from agent_loop import run_react_agent
 from llm import JARVIS_SYSTEM_PROMPT, ChatMessage, DeepSeekClient
 from memory import describe_memory_status, get_memory
 from proactive_agent import configure_proactive, shutdown_scheduler, start_scheduler
-from tools import configure_tools
+from tools import configure_tools, mcp_loader
+from watcher import shutdown_log_watcher, start_log_watcher
 from situational import build_full_context
 from stt import SAMPLE_RATE as STT_SAMPLE_RATE
 from stt import Transcriber
@@ -176,6 +177,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001
         logger.exception("Memory warmup failed; first turn may stall on embedding download")
     configure_tools(broadcast_fn=broadcast_proactive_payload)
+    try:
+        _mcp_config = os.path.join(os.path.dirname(__file__), "mcp_servers.json")
+        await mcp_loader.start(_mcp_config)
+    except Exception:  # noqa: BLE001
+        logger.exception("MCP loader failed to start")
     configure_proactive(
         broadcast_json=broadcast_proactive_payload,
         deepseek=deepseek,
@@ -185,8 +191,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         start_scheduler()
     except Exception:  # noqa: BLE001
         logger.exception("Proactive scheduler failed to start")
+    try:
+        start_log_watcher(broadcast_json=broadcast_proactive_payload)
+    except Exception:
+        logger.exception("Log watcher failed to start")
     yield
+    shutdown_log_watcher()
     shutdown_scheduler()
+    await mcp_loader.stop()
     logger.info("JARVIS backend shutting down")
 
 
@@ -203,6 +215,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/tools")
+async def list_tools() -> dict:
+    from tools.registry import REGISTRY
+    names = sorted(REGISTRY.known_names())
+    return {
+        "total": len(names),
+        "mcp_servers": mcp_loader.connected_servers(),
+        "tools": names,
+    }
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -407,6 +430,9 @@ _TOOL_KEYWORDS: frozenset[str] = frozenset({
     # calendar / files
     "calendar", "schedule", "meeting", "appointment",
     "open file", "read file", "list files", "show files",
+    "take a note", "write this down", "create a note", "save note",
+    "search my notes", "search notes", "find note", "read note",
+    "in my notes", "my notes", "notes app", "check my notes",
     # reminders / alarms / timers / stopwatch
     "remind me", "reminder", "set a timer", "timer",
     "set alarm", "set an alarm", "alarm", "wake me",
@@ -417,6 +443,7 @@ _TOOL_KEYWORDS: frozenset[str] = frozenset({
     "open ", "launch ", "start ",
     "volume", "mute", "unmute", "brightness",
     "screenshot", "what's on my screen", "what is on my screen",
+    "look at", "read my screen", "see my screen", "my screen",
     "clipboard", "copy to clipboard", "paste",
     # browser control
     "go to", "navigate to", "open website", "open the website",

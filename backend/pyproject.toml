@@ -17,6 +17,11 @@ dependencies = [
     "numpy>=1.26.0,<3",
     "piper-tts>=1.4.2",
     "anthropic>=0.97.0",
+    "mss>=9.0.2",
+    "google-genai>=0.3.0",
+    "watchdog>=4.0.0",
+    "pillow>=10.2.0",
+    "mcp>=1.27.0",
 ]
 
 [project.optional-dependencies]

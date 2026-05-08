@@ -14,73 +14,22 @@ from typing import Any
 
 from llm import DeepSeekClient
 from tools import run_tool
+from tools.registry import REGISTRY
 
 logger = logging.getLogger("jarvis.agent")
 
 MAX_STEPS = 6
 LOOP_TIMEOUT_S = 15.0
 
-TOOL_HELP = """
-Available tools — action must be EXACTLY one of these names, or final_answer:
-- web_search — args: {"query": string}
-- list_directory — args: {"path"?: string, "max_entries"?: number}
-- read_file — args: {"path": string, "max_bytes"?: number}
-- calendar_upcoming — args: {"days_ahead"?: number, "max_events"?: number}
-- set_reminder — args: {"message"?: string, "minutes": number, "name"?: string}  ← in-session HUD + optional title; at least one of message/name; speak on fire
-- open_app — args: {"app_name": string}
-- set_volume — args: {"percent"?: number, "mute"?: boolean}
-- set_brightness — args: {"percent": number}
-- get_clipboard — args: {}
-- set_clipboard — args: {"text": string}
-- take_screenshot — args: {}
-- open_url — args: {"url": string, "browser"?: string}
-- browser_search — args: {"query": string, "engine"?: "google"|"youtube"|"bing"|"duckduckgo"}
-- get_active_tab — args: {}
-- browser_action — args: {"action": "new_tab"|"close_tab"|"back"|"forward"|"reload"|"scroll_down"|"scroll_up"}
-- set_alarm — args: {"time": string, "label"?: string}  ← Puts an alarm in the Clock app; include repeat phrases in ``time`` when the user asked for them. Do not split repeat days across calls.
-- list_alarms — args: {}
-- cancel_alarm — args: {"time"?: string, "label"?: string, "all_alarms"?: boolean}  ← set all_alarms true or phrase "delete/cancel all alarms" to clear every Clock alarm; otherwise merge time+label.
-- stopwatch — args: {"action": "start"|"stop"|"check"|"reset", "name"?: string}
-- final_answer — args: null (when you can answer without more tools)
-"""
+# All three are read live from REGISTRY so MCP tools registered after import are included.
+def _tool_help() -> str:
+    return REGISTRY.tool_help()
 
-# Tools that perform a one-shot side effect — break the loop immediately after
-# a single call so the model can't repeat the action (e.g. opening 6 tabs).
-_TERMINAL_TOOLS: frozenset[str] = frozenset({
-    "open_app",
-    "set_volume",
-    "set_brightness",
-    "set_clipboard",
-    "set_reminder",
-    "open_url",
-    "browser_search",
-    "browser_action",
-    "set_alarm",
-    "cancel_alarm",
-    "stopwatch",
-})
+def _thinking_label(action: str) -> str:
+    return REGISTRY.thinking_labels().get(action, f"{action}…")
 
-_THINKING_LABELS = {
-    "web_search": "Searching…",
-    "list_directory": "Listing workspace…",
-    "read_file": "Reading file…",
-    "calendar_upcoming": "Checking calendar…",
-    "set_reminder": "Setting reminder…",
-    "open_app": "Opening app…",
-    "set_volume": "Adjusting volume…",
-    "set_brightness": "Adjusting brightness…",
-    "get_clipboard": "Reading clipboard…",
-    "set_clipboard": "Copying to clipboard…",
-    "take_screenshot": "Capturing screen…",
-    "open_url": "Opening browser…",
-    "browser_search": "Searching in browser…",
-    "get_active_tab": "Reading active tab…",
-    "browser_action": "Controlling browser…",
-    "set_alarm": "Setting alarm…",
-    "list_alarms": "Checking alarms…",
-    "cancel_alarm": "Cancelling alarm…",
-    "stopwatch": "Stopwatch…",
-}
+def _is_terminal(action: str) -> bool:
+    return action in REGISTRY.terminal_tools()
 
 
 def parse_react_json(text: str) -> dict[str, Any]:
@@ -102,13 +51,17 @@ async def _decide(
     user_message: str,
     scratchpad: str,
 ) -> dict[str, Any]:
-    prompt = f"""{TOOL_HELP}
+    prompt = f"""{_tool_help()}
+
+IMPORTANT: Every tool listed above is LIVE and already authenticated — gmail tools have OAuth access, calendar tools are connected, etc. Never assume a tool is unavailable or needs setup. If the user's request matches a tool, you MUST call it.
 
 Return ONE JSON object only (no markdown):
 {{"thought": string, "action": string, "args": object|null}}
 
-If you have enough to answer accurately, set action to "final_answer" and args null.
-Otherwise pick one tool.
+Rules:
+- If the user's request can be fulfilled by a tool, you MUST use that tool. Do NOT answer from memory.
+- Only use "final_answer" when no tool applies OR after you already have tool results in the scratchpad.
+- Never say you lack access, credentials, or settings — the tools handle that.
 
 User message:
 {user_message}
@@ -162,11 +115,11 @@ async def run_react_agent(
         if action in ("", "final_answer"):
             break
 
-        if action not in _THINKING_LABELS:
+        if action not in REGISTRY.known_names():
             scratch_lines.append(f"invalid_tool:{action}")
             break
 
-        await on_thinking_step(_THINKING_LABELS[action])
+        await on_thinking_step(_thinking_label(action))
 
         args = decision.get("args")
         args_obj: dict[str, Any] = args if isinstance(args, dict) else {}
@@ -180,8 +133,7 @@ async def run_react_agent(
         scratch_lines.append(f"{thought}\n{action} → {result[:2000]}")
         steps += 1
 
-        # Action tools are one-shot — stop immediately so we don't repeat them.
-        if action in _TERMINAL_TOOLS:
+        if _is_terminal(action):
             break
 
     scratch_text = "\n".join(scratch_lines) if scratch_lines else "(none)"
