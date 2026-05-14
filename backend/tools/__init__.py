@@ -21,6 +21,8 @@ from . import (
     alarms,
     calendar_tool,
     filesystem,
+    gdrive,
+    morning_brief,
     notes,
     reminders,
     stopwatch,

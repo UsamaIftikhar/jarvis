@@ -41,6 +41,18 @@ def _make_handler(session: ClientSession, original_name: str):
     return handler
 
 
+_TERMINAL_MCP_PREFIXES = (
+    "send_", "reply_", "create_", "delete_", "archive_",
+    "update_", "move_", "mark_", "trash_",
+)
+
+
+def _is_terminal_mcp_tool(tool_name: str) -> bool:
+    """Side-effect tools that must only run once."""
+    lower = tool_name.lower()
+    return any(lower.startswith(p) for p in _TERMINAL_MCP_PREFIXES)
+
+
 def _register_mcp_tool(server_name: str, tool: Any, session: ClientSession) -> None:
     namespaced_name = f"{server_name}__{tool.name}"
     description = tool.description or f"{tool.name} (via {server_name})"
@@ -61,6 +73,7 @@ def _register_mcp_tool(server_name: str, tool: Any, session: ClientSession) -> N
         },
         handler=_make_handler(session, tool.name),
         thinking_label=f"{server_name}…",
+        terminal=_is_terminal_mcp_tool(tool.name),
         help_hint=f"MCP integration: {server_name}",
     ))
 
@@ -86,10 +99,26 @@ async def start(config_path: str | Path) -> None:
         name = str(srv.get("name", "")).strip()
         command = str(srv.get("command", "")).strip()
         args: list[str] = srv.get("args", [])
-        extra_env: dict[str, str] = srv.get("env", {})
+        raw_env: dict[str, str] = srv.get("env", {})
 
         if not name or not command:
             logger.warning("MCP server entry missing 'name' or 'command': %s", srv)
+            continue
+
+        # Expand ${VAR} placeholders from the current process environment.
+        extra_env: dict[str, str] = {}
+        missing: list[str] = []
+        for k, v in raw_env.items():
+            expanded = os.path.expandvars(str(v))
+            if expanded.startswith("${") and expanded.endswith("}"):
+                missing.append(expanded[2:-1])
+            else:
+                extra_env[k] = expanded
+
+        if missing:
+            logger.warning(
+                "MCP server '%s': env var(s) not set — skipping: %s", name, missing
+            )
             continue
 
         # Merge extra env on top of the current process env so the child inherits PATH etc.

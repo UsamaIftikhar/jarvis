@@ -51,8 +51,10 @@ class Registry:
                 opt = "" if k in req else "?"
                 parts.append(f'"{k}"{opt}: {t}')
             args_str = "{" + ", ".join(parts) + "}" if parts else "{}"
+            desc = fn.get("description", "").strip()
+            desc_str = f" — {desc}" if desc else ""
             hint = f"  ← {entry.help_hint}" if entry.help_hint else ""
-            lines.append(f"- {name} — args: {args_str}{hint}")
+            lines.append(f"- {name}{desc_str} — args: {args_str}{hint}")
         lines.append("- final_answer — args: null (when you can answer without more tools)")
         return "\n".join(lines)
 

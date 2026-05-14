@@ -94,6 +94,99 @@ async def _set_reminder(args: dict[str, Any]) -> str:
     )
 
 
+async def _list_reminders(args: dict[str, Any]) -> str:
+    max_items = min(int(args.get("max_items", 10) or 10), 25)
+    list_name = str(args.get("list", "") or "").strip()
+
+    if list_name:
+        target = f'list "{osascript_escape(list_name)}"'
+    else:
+        target = "default list"
+
+    script = f'''
+tell application "Reminders"
+    set sep to "~~~~"
+    set output to ""
+    set rems to (every reminder of {target} whose completed is false)
+    set cnt to 0
+    repeat with r in rems
+        if cnt >= {max_items} then exit repeat
+        set rName to name of r
+        try
+            set rDue to due date of r as string
+        on error
+            set rDue to ""
+        end try
+        if output is "" then
+            set output to rName & "||" & rDue
+        else
+            set output to output & sep & rName & "||" & rDue
+        end if
+        set cnt to cnt + 1
+    end repeat
+    return output
+end tell'''
+
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "osascript failed").strip()
+            return f"Could not read Reminders: {err[:200]}"
+
+        raw = result.stdout.strip()
+        if not raw:
+            return "No pending reminders found."
+
+        items = [item.strip() for item in raw.split("~~~~") if item.strip()]
+        lines = []
+        for item in items:
+            if "||" in item:
+                name, due = item.split("||", 1)
+                due = due.strip()
+                if due:
+                    lines.append(f"• {name.strip()} — due {due}")
+                else:
+                    lines.append(f"• {name.strip()}")
+            else:
+                lines.append(f"• {item.strip()}")
+
+        return f"Pending reminders ({len(lines)}):\n" + "\n".join(lines)
+    except Exception as exc:
+        return f"Error reading reminders: {exc}"
+
+
+REGISTRY.register(ToolEntry(
+    definition={
+        "type": "function",
+        "function": {
+            "name": "list_reminders",
+            "description": "Fetch pending (incomplete) reminders from Apple Reminders app. Use when the user asks what reminders they have, what's on their list, or what they need to do.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_items": {
+                        "type": "number",
+                        "description": "Maximum number of reminders to return (default 10, max 25).",
+                    },
+                    "list": {
+                        "type": "string",
+                        "description": "Specific Reminders list name to read from. Omit for the default list.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    handler=_list_reminders,
+    thinking_label="Checking reminders…",
+    terminal=True,
+    help_hint="reads incomplete items from Apple Reminders",
+))
+
+
 REGISTRY.register(ToolEntry(
     definition={
         "type": "function",

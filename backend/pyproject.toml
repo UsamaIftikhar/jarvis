@@ -22,6 +22,9 @@ dependencies = [
     "watchdog>=4.0.0",
     "pillow>=10.2.0",
     "mcp>=1.27.0",
+    "google-api-python-client>=2.196.0",
+    "google-auth-oauthlib>=1.4.0",
+    "google-auth-httplib2>=0.4.0",
 ]
 
 [project.optional-dependencies]

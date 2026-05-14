@@ -2,16 +2,20 @@
 
 import { useEffect } from "react";
 import { useJarvis } from "@/lib/state";
+import {
+  isNativePlatform,
+  startNativeWakeWord,
+  stopNativeWakeWord,
+} from "@/lib/nativeBridge";
 
-// Trigger phrases + common mishears of "Hey JARVIS"
 const WAKE_PHRASES = [
   "hey jarvis",
   "jarvis are you with me",
   "wake up jarvis",
-  "jarvis",        // bare name — catches "just jarvis" and any phrase containing it
-  "hey javis",     // mishear: dropped r
-  "hey travis",    // mishear
-  "hey davis",     // mishear
+  "jarvis",
+  "hey javis",
+  "hey travis",
+  "hey davis",
 ];
 
 function matchesWake(transcript: string): boolean {
@@ -19,12 +23,6 @@ function matchesWake(transcript: string): boolean {
   return WAKE_PHRASES.some((p) => t.includes(p));
 }
 
-/**
- * Always-on wake word detector using the browser's Web Speech API.
- * Runs only while the mic is open and JARVIS is IDLE/ERROR.
- * Pauses automatically during LISTENING / THINKING / SPEAKING so JARVIS
- * doesn't hear its own voice or interrupt an active turn.
- */
 export function WakeDetector() {
   const state = useJarvis((s) => s.state);
   const audio = useJarvis((s) => s.audio);
@@ -32,13 +30,36 @@ export function WakeDetector() {
 
   const shouldRun = audio === "ready" && (state === "IDLE" || state === "ERROR");
 
+  // ── Native path (iOS Capacitor) ──────────────────────────────────────────
   useEffect(() => {
+    if (!isNativePlatform()) return;
+    if (!shouldRun) {
+      stopNativeWakeWord();
+      return;
+    }
+    let active = true;
+    startNativeWakeWord(() => {
+      if (active) wake("hey-jarvis");
+    });
+    return () => {
+      active = false;
+      stopNativeWakeWord();
+    };
+  }, [shouldRun, wake]);
+
+  // ── Web Speech API path (desktop / browser) ──────────────────────────────
+  useEffect(() => {
+    if (isNativePlatform()) return;
     if (!shouldRun) return;
 
-    const Ctor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    const Ctor =
+      (window as typeof window & { SpeechRecognition?: typeof SpeechRecognition })
+        .SpeechRecognition ??
+      (window as typeof window & { webkitSpeechRecognition?: typeof SpeechRecognition })
+        .webkitSpeechRecognition;
 
     if (!Ctor) {
-      console.warn("[WakeDetector] Web Speech API not available in this browser");
+      console.warn("[WakeDetector] Web Speech API not available");
       return;
     }
 
@@ -47,7 +68,6 @@ export function WakeDetector() {
 
     function start() {
       if (cancelled) return;
-
       const rec = new Ctor!();
       current = rec;
       rec.continuous = true;
@@ -65,36 +85,23 @@ export function WakeDetector() {
           }
         }
       };
-
-      // Browser ends the session after ~5s silence — restart automatically
-      rec.onend = () => {
-        if (!cancelled) setTimeout(start, 250);
-      };
-
+      rec.onend = () => { if (!cancelled) setTimeout(start, 250); };
       rec.onerror = (event: SpeechRecognitionErrorEvent) => {
-        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        if (
+          event.error === "not-allowed" ||
+          event.error === "service-not-allowed"
+        ) {
           cancelled = true;
-          console.warn("[WakeDetector] Mic permission denied — wake word disabled");
+          console.warn("[WakeDetector] Mic permission denied");
         }
-        // Other errors: onend fires next and handles restart
       };
-
-      try {
-        rec.start();
-      } catch {
-        if (!cancelled) setTimeout(start, 1000);
-      }
+      try { rec.start(); } catch { if (!cancelled) setTimeout(start, 1000); }
     }
 
     start();
-
     return () => {
       cancelled = true;
-      try {
-        current?.stop();
-      } catch {
-        /* already stopped */
-      }
+      try { current?.stop(); } catch { /* already stopped */ }
     };
   }, [shouldRun, wake]);
 

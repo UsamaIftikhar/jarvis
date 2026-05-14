@@ -9,12 +9,12 @@ import { MicPrompt } from "@/components/MicPrompt";
 import { RmsMeter } from "@/components/RmsMeter";
 import { ProfileSetup } from "@/components/ProfileSetup";
 import { SilentCommand } from "@/components/SilentCommand";
+import { BackendSettings } from "@/components/BackendSettings";
 import { useJarvis } from "@/lib/state";
 import { JarvisWsClient } from "@/lib/wsClient";
 import { fetchProfileNeedsSetup, getJarvisWsUrl } from "@/lib/jarvisEndpoints";
 import { VoicePipeline, setVoicePipelineDebug } from "@/lib/voicePipeline";
-
-const WS_URL = getJarvisWsUrl();
+import { isNativePlatform } from "@/lib/nativeBridge";
 
 export default function Page() {
   const setConnection = useJarvis((s) => s.setConnection);
@@ -32,9 +32,13 @@ export default function Page() {
   const micRef = useRef<MicReady | null>(null);
 
   const [debug, setDebug] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [wsUrl, setWsUrl] = useState("");
+  const [isNative, setIsNative] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    setWsUrl(getJarvisWsUrl());
+    setIsNative(isNativePlatform());
     const params = new URLSearchParams(window.location.search);
     const isDebug = params.get("debug") === "1";
     setDebug(isDebug);
@@ -47,13 +51,13 @@ export default function Page() {
     });
   }, [setNeedsProfileSetup]);
 
-  // --- WebSocket lifecycle (Phase 1) + voice-pipeline routing (Phase 3) ----
   useEffect(() => {
+    if (!wsUrl) return;
     setConnection("connecting");
     const pipeline = new VoicePipeline();
     pipelineRef.current = pipeline;
 
-    const client = new JarvisWsClient(WS_URL, {
+    const client = new JarvisWsClient(wsUrl, {
       onOpen: () => {
         setConnection("connected");
         setError(null);
@@ -61,15 +65,9 @@ export default function Page() {
         void fetchProfileNeedsSetup().then((needs) => {
           if (needs) setNeedsProfileSetup(true);
         });
-        // If the mic was already ready when the WS came up, arm now.
         const mic = micRef.current;
         if (mic) {
-          console.log("[page] WS open + mic ready → arming pipeline");
-          void pipeline.arm({
-            context: mic.context,
-            source: mic.source,
-            ws: client,
-          });
+          void pipeline.arm({ context: mic.context, source: mic.source, ws: client });
         }
       },
       onClose: () => setConnection("disconnected"),
@@ -80,29 +78,17 @@ export default function Page() {
           if (msg.needs_profile_setup) setNeedsProfileSetup(true);
           return;
         }
-        if (msg.type === "thinking_step") {
-          setThinkingStep(msg.label);
-          return;
-        }
+        if (msg.type === "thinking_step") { setThinkingStep(msg.label); return; }
         if (msg.type === "proactive_alert") {
-          setProactiveAlert({
-            message: msg.message,
-            priority: msg.priority,
-          });
+          setProactiveAlert({ message: msg.message, priority: msg.priority });
           return;
         }
         if (msg.type === "reminder") {
-          setProactiveAlert({
-            title: msg.name,
-            message: msg.message,
-            priority: "high",
-          });
+          setProactiveAlert({ title: msg.name, message: msg.message, priority: "high" });
           return;
         }
         switch (msg.type) {
-          case "pong":
-          case "echo":
-            break;
+          case "pong": case "echo": break;
           case "thinking":
             setThinkingStep(null);
             pipeline.handleServerMessage(msg);
@@ -131,29 +117,14 @@ export default function Page() {
       wsRef.current = null;
       pipelineRef.current = null;
     };
-  }, [
-    setConnection,
-    setError,
-    setLastMessage,
-    setNeedsProfileSetup,
-    setProactiveAlert,
-    setThinkingStep,
-  ]);
+  }, [wsUrl, setConnection, setError, setLastMessage, setNeedsProfileSetup, setProactiveAlert, setThinkingStep]);
 
-  // --- Mic ready -> arm pipeline -------------------------------------------
   const onMicReady = useCallback((mic: MicReady) => {
     micRef.current = mic;
     const ws = wsRef.current;
     const pipeline = pipelineRef.current;
-    const wsOpen = !!ws && ws.isOpen();
-    console.log(
-      `[page] onMicReady fired (pipeline=${!!pipeline}, ws=${!!ws}, ws.isOpen=${wsOpen})`,
-    );
-    if (ws && pipeline && wsOpen) {
+    if (ws && pipeline && ws.isOpen()) {
       void pipeline.arm({ context: mic.context, source: mic.source, ws });
-    } else if (ws && pipeline && !wsOpen) {
-      // WS isn't open yet — onOpen above will pick up micRef.current and arm.
-      console.log("[page] mic ready but WS not open yet — deferring arm()");
     }
   }, []);
 
@@ -162,26 +133,17 @@ export default function Page() {
     void pipelineRef.current?.disarm();
   }, []);
 
-  // --- LISTENING -> start streaming PCM ------------------------------------
-  // The state machine is the source of truth: when state flips to LISTENING
-  // (from any wake source) we start recording. The pipeline itself drives
-  // the LISTENING -> THINKING -> SPEAKING -> IDLE transitions from there.
   useEffect(() => {
     if (state !== "LISTENING") return;
     void pipelineRef.current?.startRecording();
   }, [state]);
 
-  // --- Manual wake (Space / click) -----------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.code === "Space" && !e.repeat) {
-        e.preventDefault();
-        wake("manual");
-      } else if (e.code === "Escape") {
-        sleep();
-      }
+      if (e.code === "Space" && !e.repeat) { e.preventDefault(); wake("manual"); }
+      else if (e.code === "Escape") { sleep(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -189,26 +151,23 @@ export default function Page() {
 
   const onCanvasClick = useCallback(() => wake("manual"), [wake]);
 
-  // --- Debug RMS routing ---------------------------------------------------
   const handlersRef = useRef(new Set<(rms: number) => void>());
   const onClapRms = useCallback((rms: number) => {
     handlersRef.current.forEach((h) => h(rms));
   }, []);
-  const register = useMemo(
-    () => (h: (rms: number) => void) => {
-      handlersRef.current.add(h);
-      return () => {
-        handlersRef.current.delete(h);
-      };
-    },
-    [],
-  );
+  const register = useMemo(() => (h: (rms: number) => void) => {
+    handlersRef.current.add(h);
+    return () => { handlersRef.current.delete(h); };
+  }, []);
+
+  function handleSettingsSave() {
+    // Reconnect with new URL
+    setWsUrl(getJarvisWsUrl());
+    setShowSettings(false);
+  }
 
   return (
-    <main
-      className="relative h-screen w-screen overflow-hidden"
-      onClick={onCanvasClick}
-    >
+    <main className="relative h-screen w-screen overflow-hidden" onClick={onCanvasClick}>
       <JarvisCanvas />
       <ProfileSetup />
       <StatusOverlay />
@@ -221,6 +180,21 @@ export default function Page() {
       <WakeDetector />
       <SilentCommand wsRef={wsRef} />
       {debug && <RmsMeter register={register} />}
+
+      {/* Settings gear — visible on mobile / native */}
+      {isNative && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowSettings(true); }}
+          className="fixed bottom-6 right-6 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-cyan-900 bg-black/60 font-mono text-lg text-cyan-800 backdrop-blur transition hover:border-cyan-600 hover:text-cyan-500"
+          aria-label="Settings"
+        >
+          ⚙
+        </button>
+      )}
+
+      {showSettings && (
+        <BackendSettings onClose={handleSettingsSave} />
+      )}
     </main>
   );
 }

@@ -110,6 +110,107 @@ def _resample_int16_pcm(pcm: bytes, src_sr: int, dst_sr: int) -> bytes:
     return out.tobytes()
 
 
+def _read_piper_model_sample_rate(model_path: str) -> int:
+    """Read native sample rate from Piper model's .onnx.json sidecar."""
+    import json
+    for cfg_path in (model_path + ".json", model_path.replace(".onnx", ".onnx.json")):
+        if os.path.isfile(cfg_path):
+            try:
+                with open(cfg_path) as f:
+                    return int(json.load(f)["audio"]["sample_rate"])
+            except Exception:
+                pass
+    return 22050  # Piper default when no config found
+
+
+async def _piper_stream_raw(
+    piper_cmd: str,
+    model_path: str,
+    config_path: str | None,
+    text: str,
+    timeout_s: float,
+    length_scale: float,
+) -> AsyncIterator[bytes]:
+    """Spawn Piper with --output-raw and yield int16 PCM chunks as they arrive.
+
+    Audio starts flowing before synthesis is complete — first chunk typically
+    arrives within ~100 ms on Apple Silicon, cutting perceived latency.
+    """
+    exe, cwd = _piper_exe_and_cwd(piper_cmd)
+    if not os.path.isfile(exe):
+        raise RuntimeError(
+            f"Piper executable not found: {exe!r}. Set PIPER_CMD in .env or "
+            "run scripts/install_piper_macos_aarch64.sh"
+        )
+
+    native_sr = _read_piper_model_sample_rate(model_path)
+    prefix = shlex.split(os.environ.get("PIPER_PREFIX_ARGS", "").strip())
+    cmd = [*prefix, exe, "--model", model_path, "--output-raw",
+           "--length_scale", str(length_scale)]
+    if config_path:
+        cmd.extend(["--config", config_path])
+
+    popen_kw: dict = {
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "cwd": cwd,
+        "env": _piper_subprocess_env(),
+    }
+    if os.name == "posix":
+        popen_kw["start_new_session"] = True
+
+    proc = subprocess.Popen(cmd, **popen_kw)  # noqa: S603
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+
+    def _reader() -> None:
+        try:
+            assert proc.stdin is not None
+            proc.stdin.write((text + "\n").encode("utf-8"))
+            proc.stdin.close()
+            assert proc.stdout is not None
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                loop.call_soon_threadsafe(queue.put_nowait, chunk)
+        except Exception as exc:
+            logger.warning("Piper reader thread error: %s", exc)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    reader = threading.Thread(target=_reader, daemon=True, name="jarvis-piper-raw")
+    reader.start()
+
+    need_resample = native_sr != TTS_SAMPLE_RATE
+    t0 = time.monotonic()
+    try:
+        while True:
+            remaining = timeout_s - (time.monotonic() - t0)
+            if remaining <= 0:
+                _kill_piper_proc_tree(proc)
+                raise RuntimeError(f"Piper timed out after {timeout_s}s")
+            chunk = await asyncio.wait_for(queue.get(), timeout=remaining)
+            if chunk is None:
+                break
+            if need_resample:
+                chunk = await asyncio.to_thread(_resample_int16_pcm, chunk, native_sr, TTS_SAMPLE_RATE)
+            yield chunk
+    finally:
+        await asyncio.to_thread(reader.join, 2)
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            _kill_piper_proc_tree(proc)
+
+    if proc.returncode not in (0, None):
+        assert proc.stderr is not None
+        err = proc.stderr.read().decode("utf-8", errors="ignore")[:500]
+        raise RuntimeError(f"Piper exited {proc.returncode}: {err}")
+
+
 def _piper_subprocess_env() -> dict[str, str]:
     """Optional ``PIPER_DYLD_LIBRARY_PATH`` (``os.pathsep``-separated dirs) merged into ``DYLD_LIBRARY_PATH``.
 
@@ -238,6 +339,7 @@ def _piper_run_blocking(
     config_path: str | None,
     text: str,
     timeout_s: float,
+    length_scale: float = 0.9,
 ) -> bytes:
     fd, out_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
@@ -249,7 +351,8 @@ def _piper_run_blocking(
                 "duplicate keys override earlier ones) or run scripts/install_piper_macos_aarch64.sh"
             )
         prefix = shlex.split(os.environ.get("PIPER_PREFIX_ARGS", "").strip())
-        cmd = [*prefix, exe, "--model", model_path, "--output_file", out_path]
+        cmd = [*prefix, exe, "--model", model_path, "--output_file", out_path,
+               "--length_scale", str(length_scale)]
         if config_path:
             cmd.extend(["--config", config_path])
         t0 = time.monotonic()
@@ -442,6 +545,8 @@ class PiperClient:
             _resolve_path_maybe_relative(raw_cfg) if raw_cfg else None
         )
         self.timeout_s = float(timeout_s or os.environ.get("PIPER_TIMEOUT_S", "120"))
+        # < 1.0 = faster speech, > 1.0 = slower. Default 0.9 is slightly snappier.
+        self.length_scale = float(os.environ.get("PIPER_LENGTH_SCALE", "0.9"))
 
     async def stream_pcm(self, text: str) -> AsyncIterator[bytes]:
         """Synthesize one chunk; yield 16 kHz int16 mono PCM in 4k blocks."""
@@ -455,32 +560,23 @@ class PiperClient:
             )
 
         logger.info("Piper: synthesizing (~%d chars)", len(text))
-        wav_bytes = await asyncio.to_thread(
-            _piper_run_blocking,
+        got_any = False
+        async for chunk in _piper_stream_raw(
             self.piper_cmd,
             self.model_path,
             self.cli_config_path,
             text,
             self.timeout_s,
-        )
-        pcm, sr = await asyncio.to_thread(_wav_bytes_to_int16_mono, wav_bytes)
-        logger.info(
-            "Piper: done (wav_bytes=%s pcm_sr=%s pcm_mono=%s)",
-            f"{len(wav_bytes):,}",
-            sr,
-            f"{len(pcm):,}",
-        )
-        if not pcm:
+            self.length_scale,
+        ):
+            got_any = True
+            yield chunk
+        if not got_any:
             raise RuntimeError(
-                "Piper produced a WAV file with zero samples — check Piper binary "
+                "Piper produced zero samples — check Piper binary "
                 "(Rosetta + PIPER_PREFIX_ARGS / PIPER_DYLD_LIBRARY_PATH on Apple Silicon), "
-                "voice model path, or run from backend with logging enabled."
+                "voice model path, or run with logging enabled."
             )
-        if sr != TTS_SAMPLE_RATE:
-            pcm = await asyncio.to_thread(_resample_int16_pcm, pcm, sr, TTS_SAMPLE_RATE)
-        step = 4096
-        for i in range(0, len(pcm), step):
-            yield pcm[i : i + step]
 
 
 class PiperPythonClient:

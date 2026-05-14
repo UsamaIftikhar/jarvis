@@ -53,9 +53,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agent_loop import run_react_agent
+from conversation_log import append_turn, history_summary_for_prompt, trim_log
 from llm import JARVIS_SYSTEM_PROMPT, ChatMessage, DeepSeekClient
 from memory import describe_memory_status, get_memory
-from proactive_agent import configure_proactive, shutdown_scheduler, start_scheduler
+from proactive_agent import configure_proactive, reconnect_brief, shutdown_scheduler, start_scheduler
 from tools import configure_tools, mcp_loader
 from watcher import shutdown_log_watcher, start_log_watcher
 from situational import build_full_context
@@ -88,6 +89,7 @@ SERVER_VERSION = "0.6.0"
 # Proactive agents + idle detection
 LAST_INTERACTION_TS = time.time()
 _ws_clients: set[WebSocket] = set()
+_last_all_disconnected_ts: float = 0.0   # timestamp when last client disconnected
 
 
 class HealthResponse(BaseModel):
@@ -182,10 +184,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await mcp_loader.start(_mcp_config)
     except Exception:  # noqa: BLE001
         logger.exception("MCP loader failed to start")
+    trim_log()
     configure_proactive(
         broadcast_json=broadcast_proactive_payload,
         deepseek=deepseek,
         last_interaction_ts=lambda: LAST_INTERACTION_TS,
+        has_clients=lambda: bool(_ws_clients),
     )
     try:
         start_scheduler()
@@ -296,12 +300,20 @@ class Session:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    global LAST_INTERACTION_TS
+    global LAST_INTERACTION_TS, _last_all_disconnected_ts
     await websocket.accept()
+    was_empty = len(_ws_clients) == 0
     _ws_clients.add(websocket)
     LAST_INTERACTION_TS = time.time()
     client = websocket.client
     logger.info("WS connected: %s", client)
+
+    # Reconnect brief: fire if no clients were connected for > 2 hours
+    if was_empty and _last_all_disconnected_ts > 0:
+        away_seconds = time.time() - _last_all_disconnected_ts
+        if away_seconds > 7200:
+            away_hours = away_seconds / 3600
+            asyncio.create_task(reconnect_brief(away_hours))
 
     session = Session()
     await _send_json(
@@ -335,6 +347,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             pass
     finally:
         _ws_clients.discard(websocket)
+        if not _ws_clients:
+            _last_all_disconnected_ts = time.time()
         if session.active_task and not session.active_task.done():
             session.active_task.cancel()
 
@@ -434,11 +448,38 @@ _TOOL_KEYWORDS: frozenset[str] = frozenset({
     "search my notes", "search notes", "find note", "read note",
     "in my notes", "my notes", "notes app", "check my notes",
     # reminders / alarms / timers / stopwatch
-    "remind me", "reminder", "set a timer", "timer",
+    "remind me", "reminder", "reminders", "my reminders", "list reminders",
+    "what reminders", "show reminders", "check reminders", "pending reminders",
+    "set a timer", "timer",
     "set alarm", "set an alarm", "alarm", "wake me",
     "list alarms", "show alarms", "what alarms",
     "cancel alarm", "delete alarm", "remove alarm",
     "stopwatch", "start stopwatch", "stop stopwatch", "lap time",
+    # email / gmail
+    "email", "emails", "gmail", "inbox", "unread", "mail",
+    "send email", "send an email", "reply to", "reply back", "respond to",
+    "draft", "draft an email", "write an email", "compose",
+    "new email", "any email", "check email", "read email",
+    "forward", "delete email", "archive",
+    # morning brief
+    "good morning", "morning jarvis", "morning brief", "morning update",
+    "what's happening today", "whats happening today", "what happened",
+    # github
+    "github", "repo", "repository", "pull request", "pr", "open prs",
+    "issues", "my issues", "open issues", "commits", "branches", "code review",
+    "merge", "push", "what prs", "summarize my", "github issues",
+    # google drive
+    "drive", "google drive", "my drive", "gdrive", "my docs", "my documents",
+    "find file", "search drive", "open doc", "my spreadsheet", "my slides",
+    "shared with me", "recent files",
+    "add a file", "create a file", "create a doc", "create a document",
+    "save to drive", "upload to drive", "upload a file", "write a file",
+    "create folder", "make a folder", "new folder", "delete from drive",
+    "list my drive", "what's in my drive", "files in drive",
+    # slack
+    "slack", "message", "messages", "any messages", "slack messages",
+    "channel", "channels", "dm", "direct message", "slack update",
+    "team", "workspace", "mentions", "unread messages",
     # system / app control
     "open ", "launch ", "start ",
     "volume", "mute", "unmute", "brightness",
@@ -545,7 +586,9 @@ async def _build_system(session: "Session", user_text: str) -> str:
         prof,
         memory_ctx,
     )
-    return JARVIS_SYSTEM_PROMPT + "\n\n" + get_profile_context() + "\n\n" + situ_block
+    history_ctx = history_summary_for_prompt()
+    hist_section = f"\n\n{history_ctx}" if history_ctx else ""
+    return JARVIS_SYSTEM_PROMPT + "\n\n" + get_profile_context() + "\n\n" + situ_block + hist_section
 
 
 async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: str) -> None:
@@ -628,6 +671,8 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
         mem = get_memory()
         if mem.enabled and full_reply.strip():
             asyncio.create_task(mem.remember(f"User: {user_text}\nAssistant: {full_reply.strip()}"))
+        if full_reply.strip():
+            append_turn(user_text, full_reply.strip())
 
     except asyncio.CancelledError:
         raise
@@ -793,6 +838,8 @@ async def _run_turn(
         mem = get_memory()
         if mem.enabled and full_reply.strip():
             asyncio.create_task(mem.remember(f"User: {user_text}\nAssistant: {full_reply.strip()}"))
+        if full_reply.strip():
+            append_turn(user_text, full_reply.strip())
 
     except asyncio.CancelledError:
         logger.info("turn cancelled")
@@ -913,15 +960,19 @@ _MD_LIST        = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
 _MD_OLIST       = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
 _MD_HR          = re.compile(r"^[-*_]{3,}\s*$", re.MULTILINE)
 _MULTI_SPACE    = re.compile(r"  +")
+_URL            = re.compile(r"https?://\S+")
+_PAREN_URL      = re.compile(r"\(https?://[^\)]+\)")
 
 
 def _clean_for_tts(text: str) -> str:
-    """Strip markdown and special characters that TTS should not speak aloud."""
+    """Strip markdown, URLs and special characters that TTS should not speak aloud."""
     t = _MD_CODE_BLOCK.sub("", text)
+    t = _PAREN_URL.sub("", t)       # remove (https://...) first
     t = _MD_BOLD_ITALIC.sub(r"\1", t)
     t = _MD_UNDER.sub(r"\1", t)
     t = _MD_CODE_INLINE.sub(r"\1", t)
     t = _MD_LINK.sub(r"\1", t)
+    t = _URL.sub("", t)             # strip any remaining bare URLs
     t = _MD_HEADING.sub("", t)
     t = _MD_BLOCKQUOTE.sub("", t)
     t = _MD_LIST.sub("", t)
