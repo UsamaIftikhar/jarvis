@@ -51,17 +51,28 @@ async def _decide(
     user_message: str,
     scratchpad: str,
 ) -> dict[str, Any]:
+    already_called = [line.split(" →")[0].strip().split("\n")[-1] for line in scratchpad.splitlines() if " →" in line] if scratchpad else []
+    blocked_note = f"\nTools already called this turn (DO NOT call again): {already_called}" if already_called else ""
+
     prompt = f"""{_tool_help()}
 
-IMPORTANT: Every tool listed above is LIVE and already authenticated — gmail tools have OAuth access, calendar tools are connected, etc. Never assume a tool is unavailable or needs setup. If the user's request matches a tool, you MUST call it.
+IMPORTANT: Every tool listed above is LIVE and already authenticated. If the user's request matches a tool, you MUST call it.
 
 Return ONE JSON object only (no markdown):
 {{"thought": string, "action": string, "args": object|null}}
 
 Rules:
-- If the user's request can be fulfilled by a tool, you MUST use that tool. Do NOT answer from memory.
+- Use a tool if one applies. Do NOT answer from memory.
 - Only use "final_answer" when no tool applies OR after you already have tool results in the scratchpad.
+- CRITICAL: If the user is asking you to DO something (post, send, create, review, delete, upload, submit, reply) you MUST call a tool. Never confirm an action without calling the corresponding tool first — doing so is a lie.
 - Never say you lack access, credentials, or settings — the tools handle that.
+- Each tool can only be called ONCE per turn.{blocked_note}
+
+MULTI-STEP LOGIC:
+- If a search returned "No files found" or "not found", the NEXT action is to CREATE it — do not search again.
+- To create a file inside a folder: call gdrive_upload_file with parent_folder_name="folder name" — no prior search needed, folder is auto-created.
+- To create a folder then file: call gdrive_upload_file once with parent_folder_name set — it handles both.
+- If the scratchpad already has the answer, use final_answer immediately.
 
 User message:
 {user_message}
@@ -124,6 +135,7 @@ async def run_react_agent(
 
         if action in called_actions:
             logger.warning("ReAct: tool %r already called this turn — aborting loop", action)
+            scratch_lines.append(f"SYSTEM: {action} was blocked (already called). No write action was performed.")
             break
 
         await on_thinking_step(_thinking_label(action))
@@ -147,26 +159,56 @@ async def run_react_agent(
 
     scratch_text = "\n".join(scratch_lines) if scratch_lines else "(none)"
 
-    # Detect whether any write action actually succeeded
-    write_keywords = ("created", "uploaded", "deleted", "sent", "replied", "moved", "updated", "marked")
-    error_keywords = ("error", "Error", "failed", "unavailable", "Tool error")
-    write_ran = any(kw in scratch_text for kw in write_keywords)
-    error_ran = any(kw in scratch_text for kw in error_keywords)
-    no_action_ran = not scratch_lines
+    # Classify outcome — inspect only the tool RESULT portion (after " → "), not the LLM thought,
+    # to avoid false positives when the thought mentions past errors.
+    result_text = "\n".join(
+        line.split(" → ", 1)[1] if " → " in line else ""
+        for line in scratch_lines
+    )
 
-    if no_action_ran or (not write_ran and not error_ran):
+    _WRITE_SUCCESS = ("created", "uploaded", "deleted", "sent", "replied", "moved", "updated", "marked", "saved",
+                      "posted", "Review posted", "comment on PR")
+    _ERRORS        = ("error", "Error", "failed", "unavailable", "Tool error", "blocked")
+    _WRITE_INTENT  = ("create", "make", "add", "upload", "save", "delete", "remove", "send",
+                      "reply", "write", "put", "build", "new folder", "new file",
+                      "post", "submit", "publish", "push", "deploy")
+
+    write_succeeded  = any(kw in result_text for kw in _WRITE_SUCCESS)
+    had_error        = any(kw in result_text for kw in _ERRORS)
+    user_wants_write = any(kw in user_message.lower() for kw in _WRITE_INTENT)
+    no_tool_ran      = not scratch_lines
+
+    # Short-circuit: user wanted an action but no tool ran at all (LLM went straight to final_answer)
+    if user_wants_write and no_tool_ran:
+        yield "I'm sorry, sir — I wasn't able to execute that action. Please try again."
+        return
+
+    # Short-circuit: tool ran but errored, and write didn't succeed
+    if user_wants_write and not write_succeeded and scratch_lines and had_error:
+        yield "I'm afraid that action failed, sir. "
+        if "blocked" in result_text:
+            yield "The agent got stuck in a loop — please try rephrasing the request."
+        else:
+            yield "There was an error completing it — please check the backend logs for details."
+        return
+
+    # Build final system block with honest context
+    if had_error and not write_succeeded:
         honesty_note = (
-            "\n\nCRITICAL: No write operation was actually executed this turn. "
-            "Do NOT claim any file, folder, email, or object was created/sent/deleted. "
-            "Tell the user you were unable to complete the action and what you tried."
+            "\n\nFACT: The tool above returned an error. The action DID NOT complete. "
+            "State this clearly and briefly. Do not claim success."
         )
-    elif error_ran:
+        final_temp = 0.2
+    elif user_wants_write and not write_succeeded and not no_tool_ran:
         honesty_note = (
-            "\n\nCRITICAL: A tool returned an error above. The action DID NOT succeed. "
-            "Tell the user it failed and what went wrong. NEVER claim success when a tool returned an error."
+            "\n\nFACT: No write/create/delete action was executed this turn — only read/search tools ran. "
+            "Do NOT claim any file, folder, email, or object was created or modified. "
+            "Tell the user plainly that you were unable to complete it and suggest they try again."
         )
+        final_temp = 0.2
     else:
         honesty_note = ""
+        final_temp = 0.65
 
     system_block = (
         full_system
@@ -182,6 +224,6 @@ async def run_react_agent(
     ]
 
     async for delta in client.stream_chat_messages(
-        final_messages, temperature=0.65, max_tokens=512
+        final_messages, temperature=final_temp, max_tokens=512
     ):
         yield delta

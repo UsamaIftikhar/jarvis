@@ -468,6 +468,8 @@ _TOOL_KEYWORDS: frozenset[str] = frozenset({
     "github", "repo", "repository", "pull request", "pr", "open prs",
     "issues", "my issues", "open issues", "commits", "branches", "code review",
     "merge", "push", "what prs", "summarize my", "github issues",
+    "review pr", "review the pr", "review pull", "check the pr", "pr review",
+    "post the review", "post review", "send the review", "submit the review", "send it to the developer",
     # google drive
     "drive", "google drive", "my drive", "gdrive", "my docs", "my documents",
     "find file", "search drive", "open doc", "my spreadsheet", "my slides",

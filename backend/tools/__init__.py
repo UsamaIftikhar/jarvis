@@ -22,6 +22,7 @@ from . import (
     calendar_tool,
     filesystem,
     gdrive,
+    github_tools,
     morning_brief,
     notes,
     reminders,
