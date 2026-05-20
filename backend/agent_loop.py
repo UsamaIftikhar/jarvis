@@ -50,9 +50,12 @@ async def _decide(
     system: str,
     user_message: str,
     scratchpad: str,
+    blocked_calls: list[str],
 ) -> dict[str, Any]:
-    already_called = [line.split(" →")[0].strip().split("\n")[-1] for line in scratchpad.splitlines() if " →" in line] if scratchpad else []
-    blocked_note = f"\nTools already called this turn (DO NOT call again): {already_called}" if already_called else ""
+    blocked_note = (
+        f"\nAlready called this turn (do NOT repeat with the same args): {blocked_calls}"
+        if blocked_calls else ""
+    )
 
     prompt = f"""{_tool_help()}
 
@@ -66,7 +69,8 @@ Rules:
 - Only use "final_answer" when no tool applies OR after you already have tool results in the scratchpad.
 - CRITICAL: If the user is asking you to DO something (post, send, create, review, delete, upload, submit, reply) you MUST call a tool. Never confirm an action without calling the corresponding tool first — doing so is a lie.
 - Never say you lack access, credentials, or settings — the tools handle that.
-- Each tool can only be called ONCE per turn.{blocked_note}
+- You MAY call the same tool multiple times in one turn if the arguments differ (e.g. reading two different emails is fine).
+- Do NOT call the same tool with the exact same arguments more than once.{blocked_note}
 
 MULTI-STEP LOGIC:
 - If a search returned "No files found" or "not found", the NEXT action is to CREATE it — do not search again.
@@ -96,6 +100,13 @@ Scratchpad:
         return {"thought": "parse error", "action": "final_answer", "args": None}
 
 
+def _is_param_error(result: str) -> bool:
+    """Return True when a tool result is a JSON-schema / Zod parameter validation error."""
+    return result.startswith("Error: [") and any(
+        kw in result for kw in ('"invalid_type"', '"Required"', '"code"')
+    )
+
+
 async def run_react_agent(
     *,
     client: DeepSeekClient,
@@ -106,7 +117,9 @@ async def run_react_agent(
 ) -> AsyncIterator[str]:
     """Yield token deltas for the final user-facing reply only."""
     scratch_lines: list[str] = []
-    called_actions: set[str] = set()
+    # Track (action, canonical_args_json) so the same tool with different args is allowed.
+    called_calls: set[tuple[str, str]] = set()
+    param_retries: dict[tuple[str, str], int] = {}  # one-retry budget per (action, args) on param errors
     steps = 0
     deadline = time.monotonic() + LOOP_TIMEOUT_S
 
@@ -116,11 +129,13 @@ async def run_react_agent(
             break
 
         scratch = "\n".join(scratch_lines) if scratch_lines else ""
+        blocked_calls = [f"{a}({cargs})" for a, cargs in called_calls]
         decision = await _decide(
             client,
             system=full_system,
             user_message=user_message,
             scratchpad=scratch,
+            blocked_calls=blocked_calls,
         )
         action = str(decision.get("action") or "").strip()
         logger.info("ReAct step %d: action=%r thought=%r", steps, action, str(decision.get("thought") or "")[:120])
@@ -133,15 +148,18 @@ async def run_react_agent(
             scratch_lines.append(f"invalid_tool:{action}")
             break
 
-        if action in called_actions:
-            logger.warning("ReAct: tool %r already called this turn — aborting loop", action)
-            scratch_lines.append(f"SYSTEM: {action} was blocked (already called). No write action was performed.")
+        args = decision.get("args")
+        args_obj: dict[str, Any] = args if isinstance(args, dict) else {}
+        canonical_args = json.dumps(args_obj, sort_keys=True)
+        call_key = (action, canonical_args)
+
+        if call_key in called_calls:
+            logger.warning("ReAct: tool %r called again with same args — aborting loop", action)
+            scratch_lines.append(f"SYSTEM: {action} was blocked (duplicate call with identical args). No action was performed.")
             break
 
         await on_thinking_step(_thinking_label(action))
 
-        args = decision.get("args")
-        args_obj: dict[str, Any] = args if isinstance(args, dict) else {}
         thought = str(decision.get("thought") or "")
         try:
             result = await run_tool(action, json.dumps(args_obj))
@@ -150,7 +168,11 @@ async def run_react_agent(
             result = f"Tool error: {exc}"
             logger.exception("tool %s failed", action)
 
-        called_actions.add(action)
+        if _is_param_error(result) and param_retries.get(call_key, 0) < 1:
+            param_retries[call_key] = param_retries.get(call_key, 0) + 1
+            logger.info("ReAct: tool %r had param error — allowing one retry", action)
+        else:
+            called_calls.add(call_key)
         scratch_lines.append(f"{thought}\n{action} → {result[:2000]}")
         steps += 1
 

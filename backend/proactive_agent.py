@@ -241,12 +241,118 @@ async def topic_digest() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Idle reminder
+# Morning brief — cron at user's morning_start time (default 08:00)
+# ---------------------------------------------------------------------------
+
+async def morning_brief_job() -> None:
+    """Auto-deliver morning brief at 8 AM if a client is connected."""
+    if not _broadcast_json or not _deepseek:
+        return
+    if not _clients_connected():
+        return
+    try:
+        raw = await run_tool("morning_brief", "{}")
+        if raw.startswith("[already_briefed_today]"):
+            return
+        data = await _deepseek.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS. Summarize the following into a crisp spoken morning briefing "
+                        "in 3–4 natural sentences. Address the user as 'sir'. "
+                        "Mention today's meetings, weather headline, and any notable emails."
+                    ),
+                },
+                {"role": "user", "content": raw},
+            ],
+            tools=None,
+            temperature=0.4,
+            max_tokens=300,
+        )
+        text = (
+            (data.get("choices", [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
+        if text:
+            await _broadcast_json(
+                {"type": "proactive_alert", "message": text, "priority": "high", "speak": True}
+            )
+    except Exception:
+        logger.exception("morning_brief_job failed")
+
+
+# ---------------------------------------------------------------------------
+# Smart email scan — every 30 min, LLM judges importance
+# ---------------------------------------------------------------------------
+
+async def smart_email_scan() -> None:
+    """Surface genuinely important new emails; ignore newsletters and receipts."""
+    if not _broadcast_json or not _deepseek:
+        return
+    if not _clients_connected():
+        return
+    try:
+        now = datetime.now()
+        if not (8 <= now.hour < 22):
+            return
+
+        emails = await run_tool(
+            "gmail__search_emails",
+            json.dumps({"query": "is:unread", "maxResults": 10}),
+        )
+        if not emails or "Error" in emails[:30]:
+            return
+
+        st = _load_state()
+        seen_ids: set[str] = set(st.get("seen_email_ids", []))
+        found_ids = re.findall(r"ID:\s*([a-f0-9]+)", emails)
+        new_ids = [eid for eid in found_ids if eid not in seen_ids]
+
+        if not new_ids:
+            return
+
+        judgment = await _deepseek.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS screening emails for the user. "
+                        "Important = invoices, payments, deliveries, urgent messages from real people, deadlines, account alerts. "
+                        "NOT important = newsletters, promotions, automated order receipts, social notifications. "
+                        "If any email is important, reply with ONE sentence alerting the user (start with 'Sir,'). "
+                        "If nothing important, reply with exactly: NO_ALERT"
+                    ),
+                },
+                {"role": "user", "content": f"New unread emails:\n{emails[:2500]}"},
+            ],
+            tools=None,
+            temperature=0.2,
+            max_tokens=120,
+        )
+        text = (
+            (judgment.get("choices", [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
+
+        # Always update seen IDs so we don't re-evaluate the same emails
+        seen_ids.update(found_ids)
+        st["seen_email_ids"] = list(seen_ids)[-300:]
+        _save_state(st)
+
+        if text and not text.upper().startswith("NO_ALERT"):
+            await _broadcast_json(
+                {"type": "proactive_alert", "message": text, "priority": "medium", "speak": True}
+            )
+    except Exception:
+        logger.exception("smart_email_scan failed")
+
+
+# ---------------------------------------------------------------------------
+# Idle reminder — enriched with actual context
 # ---------------------------------------------------------------------------
 
 async def idle_reminder() -> None:
-    """Nudge during work hours if the user has been quiet for 2+ hours."""
-    if not _broadcast_json or not _last_interaction_ts:
+    """Contextual nudge during work hours after 2 h of silence."""
+    if not _broadcast_json or not _last_interaction_ts or not _deepseek:
         return
     if not _clients_connected():
         return
@@ -256,16 +362,109 @@ async def idle_reminder() -> None:
             return
         if time.time() - _last_interaction_ts() < 7200:
             return
-        await _broadcast_json(
-            {
-                "type": "proactive_alert",
-                "message": "Sir, you've been quiet for a couple of hours. Anything I can help with?",
-                "priority": "low",
-                "speak": False,
-            }
+
+        cal = await run_tool(
+            "calendar_upcoming", json.dumps({"days_ahead": 1, "max_events": 3})
         )
+        emails = ""
+        try:
+            emails = await run_tool(
+                "gmail__search_emails",
+                json.dumps({"query": "is:unread", "maxResults": 3}),
+            )
+        except Exception:
+            pass
+
+        data = await _deepseek.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS. The user has been idle for 2+ hours during work time. "
+                        "Write ONE brief, natural check-in sentence (max 25 words). "
+                        "Mention the soonest upcoming meeting or a notable unread email if relevant. "
+                        "Address the user as 'sir'."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Calendar:\n{cal[:500]}\n\nUnread emails:\n{emails[:400]}",
+                },
+            ],
+            tools=None,
+            temperature=0.5,
+            max_tokens=80,
+        )
+        text = (
+            (data.get("choices", [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
+        if text:
+            await _broadcast_json(
+                {"type": "proactive_alert", "message": text, "priority": "low", "speak": False}
+            )
     except Exception:
         logger.exception("idle_reminder failed")
+
+
+# ---------------------------------------------------------------------------
+# Evening wrap-up — cron at 18:00, once per day
+# ---------------------------------------------------------------------------
+
+async def evening_wrapup() -> None:
+    """End-of-day summary: remaining events + notable unread emails."""
+    if not _broadcast_json or not _deepseek:
+        return
+    if not _clients_connected():
+        return
+    try:
+        today = datetime.now().date().isoformat()
+        st = _load_state()
+        if st.get("evening_wrapup_date") == today:
+            return
+
+        cal = await run_tool(
+            "calendar_upcoming", json.dumps({"days_ahead": 1, "max_events": 8})
+        )
+        emails = ""
+        try:
+            emails = await run_tool(
+                "gmail__search_emails",
+                json.dumps({"query": "is:unread", "maxResults": 5}),
+            )
+        except Exception:
+            pass
+
+        data = await _deepseek.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are JARVIS. It's the end of the work day. "
+                        "Give a 2-sentence evening wrap-up: any remaining events today or tomorrow, "
+                        "and any notable unread emails worth actioning tonight. "
+                        "Be brief. Address the user as 'sir'."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Calendar:\n{cal[:1000]}\n\nUnread emails:\n{emails[:800]}",
+                },
+            ],
+            tools=None,
+            temperature=0.4,
+            max_tokens=200,
+        )
+        text = (
+            (data.get("choices", [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
+        if text:
+            st["evening_wrapup_date"] = today
+            _save_state(st)
+            await _broadcast_json(
+                {"type": "proactive_alert", "message": text, "priority": "medium", "speak": True}
+            )
+    except Exception:
+        logger.exception("evening_wrapup failed")
 
 
 # ---------------------------------------------------------------------------
@@ -372,15 +571,31 @@ def start_scheduler() -> None:
     global _scheduler
     if _scheduler is not None:
         return
+
+    p = load_profile()
+    morning_h, morning_m = 8, 0
+    try:
+        hh, mm = p.routines.get("morning_start", "08:00").split(":")
+        morning_h, morning_m = int(hh), int(mm)
+    except Exception:
+        pass
+
     sched = AsyncIOScheduler()
-    sched.add_job(weather_watch,       "interval", minutes=30,              id="weather_watch")
-    sched.add_job(meeting_countdown,   "interval", minutes=5,               id="meeting_countdown")
-    sched.add_job(topic_digest,        "cron", day_of_week="sun", hour=9,   id="topic_digest")
-    sched.add_job(idle_reminder,       "interval", hours=3,                 id="idle_reminder")
-    sched.add_job(refresh_gmail_token, "interval", minutes=45,              id="refresh_gmail_token")
+    sched.add_job(weather_watch,       "interval", minutes=30,                          id="weather_watch")
+    sched.add_job(meeting_countdown,   "interval", minutes=5,                           id="meeting_countdown")
+    sched.add_job(topic_digest,        "cron",     day_of_week="sun", hour=9,           id="topic_digest")
+    sched.add_job(idle_reminder,       "interval", hours=3,                             id="idle_reminder")
+    sched.add_job(refresh_gmail_token, "interval", minutes=45,                          id="refresh_gmail_token")
+    sched.add_job(morning_brief_job,   "cron",     hour=morning_h, minute=morning_m,    id="morning_brief")
+    sched.add_job(smart_email_scan,    "interval", minutes=30,                          id="smart_email_scan")
+    sched.add_job(evening_wrapup,      "cron",     hour=18, minute=0,                   id="evening_wrapup")
     sched.start()
     _scheduler = sched
-    logger.info("APScheduler started — weather(30m), meetings(5m), digest(sun), idle(3h), gmail-refresh(45m)")
+    logger.info(
+        "APScheduler started — weather(30m), meetings(5m), digest(sun), idle(3h), "
+        "gmail-refresh(45m), morning-brief(%02d:%02d), email-scan(30m), evening-wrapup(18:00)",
+        morning_h, morning_m,
+    )
 
 
 def shutdown_scheduler() -> None:

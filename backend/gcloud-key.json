@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "ancient-cortex-495620-p4",
+  "private_key_id": "29edd0b3a51247915ac25db81aebcaa6145a5a0a",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDWXpkjcYjMmhCG\nF1zsAGuxDl4GPhSqDLoshKPlzNuBmp676XGxJU7Ig1mwmaTSXPAy5ad9ln3Y0l+g\nKJUvq4sBao+tVuVK/BRmEgH0NhjJKD56x1C3RSVwLVsGMATZFn2jw43NJTrCWpeE\nkD7k7gJ8SVwtRrdCH/iRgP8fOTJ1c9oUFiON0uZ0jdf0IxSE9GFjKbS6cbqkrobn\nZyG3dSvq9aMVMae/vX2HzjSWq7PzPiM4eAPf3WQp+w8ssDxFiCBJnWWOClqe8d1z\nvqd/fFvAPut2YfJ09vKMpwXNprn+Cf7hzb0ErMSRTs9KIKtevhu42DDE30Geeutu\nWgpULqCRAgMBAAECggEAA4v8eVNR5x4OyJkvBryZtjaS+a7MmrpWg5FiQNVwivwV\nmkL/iDsiIDvZdQw7Ejv1bBzT9kZSKLnlA8+ywDTUukjwEvciw2iDpzivDZeuNfh+\nKCaPav4wOLiXY/UmxLdpjBcai9q3gSsMjLtHlHQXrcTCS1bQhhM6AqD2wlEo85Et\nCEl5G/Pnba/p5beGKHYiBhzyywNwqGNJlQxX9DFyrmwc17WISTPiOa2BZhhYoegI\nwUwPtjj76PiQOWuBzjq5H0hccUUOEvSji+hbYo7YXtiD+jNYGjoDczqmFXO24uOM\nZU2fJh3L5YT6Jp0S3WPHiLHFtPnQxAbpUG52V4F97QKBgQD+XnMaN4SByLANxsMa\nABORM3DFEkplxYpo2gtH9OF+NTyVLDjY7pflv4hc+3IIXgmSkiSSSYpG8kJ9alMF\nOO/y8cSk74jziuGTRiEOqP2bzx/q07emUDB+IKlgcj6s8AV1aUbNy4Kl3A7fO8Go\nEcL/USYaxt4k+e/asXkHZkrUUwKBgQDXvn0rJ6LSySOxFOEmMvcMaPD9hDaE1qeg\nX4kZxWTOFbPgYwU+PDZ9hcJSd6LLZTNOn64ZnbcbLqNGc1Zk1YoWDC8Rmz18KqN9\nwLjqEqTG8K0DTKcT+hgjs1hjToxAEKtioTWIvlUBrE7jo9d2j3wc2BStOlHqZI94\ndSkShMpbCwKBgDGKe6hzf583UvKb74u00BrLhf8b3NmNa7OYI/JTw0ctXys+faPi\ndDsO3qQdZMw0ZHDjfbPwFrpSnJiIiLrPqAwNAluNO4MTXXOtiOquBxa9dF3r9iyy\nGX+3JMXf+kz8QlPnuR6DsGJVRaA8py7wpqXLTDyS1tkkxI43WncSeSh5AoGBAIjN\npKc5wfixTK2cVMyZIqi+3pmTPdLsHm0GR3SNA8feYSpW/9sf6Vmc+MS8UgFxkaA4\nhvh9Vr+oyiYBOvZDpgUnAq3CZ7GVhAhYrajX256+vKbL82IqgyYYMmL+StbQ+yxW\nlxC3yEWAUqHsodLvVz8fEbVqtsjPrV4vxLSWeY5TAoGBANdO110HwgcqiqasSvB/\nNYyzoWDGiIrfB2HSthC9BbuQ1BH91HUSnePsBRrmFE/whh5iUbWMXBfyn+g2B+gz\nlVS+pukLpFWXDU99QTNvmCUqsg3Jyb/Kr8MbzomFAq15KS2/flC9wugM1AJuVcFJ\ndrrn1onvIXGKyzQe5d0N7qm3\n-----END PRIVATE KEY-----\n",
+  "client_email": "jarvis-marketing@ancient-cortex-495620-p4.iam.gserviceaccount.com",
+  "client_id": "116786931266556108834",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/jarvis-marketing%40ancient-cortex-495620-p4.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

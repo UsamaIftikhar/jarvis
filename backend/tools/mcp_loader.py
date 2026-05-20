@@ -8,10 +8,13 @@ This prevents collisions with built-in tools.
 
 from __future__ import annotations
 
+import html as _html_lib
 import json
 import logging
 import os
+import re
 from contextlib import AsyncExitStack
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +29,63 @@ _exit_stack = AsyncExitStack()
 _sessions: dict[str, ClientSession] = {}
 
 
+class _TextExtractor(HTMLParser):
+    """Minimal HTML-to-text converter: skips style/script, adds newlines at block tags."""
+
+    _BLOCK_TAGS = frozenset({"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "td", "th"})
+    _SKIP_TAGS = frozenset({"style", "script", "head"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: list[str] = []
+        self._skip = False
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        if tag in self._SKIP_TAGS:
+            self._skip = True
+        elif tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP_TAGS:
+            self._skip = False
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip:
+            self._parts.append(data)
+
+    def get_text(self) -> str:
+        raw = "".join(self._parts)
+        lines = [ln.strip() for ln in raw.splitlines()]
+        out: list[str] = []
+        blank = 0
+        for ln in lines:
+            if ln:
+                blank = 0
+                out.append(ln)
+            else:
+                blank += 1
+                if blank == 1:
+                    out.append("")
+        return "\n".join(out).strip()
+
+
+def _strip_html(text: str) -> str:
+    """Convert HTML markup to readable plain text, preserving header lines."""
+    parser = _TextExtractor()
+    parser.feed(_html_lib.unescape(text))
+    return parser.get_text()
+
+
 def _result_to_str(result: Any) -> str:
     if getattr(result, "isError", False):
         parts = [b.text for b in result.content if hasattr(b, "text")]
         return "MCP tool error: " + ("\n".join(parts) or "(unknown error)")
     parts = [b.text for b in result.content if hasattr(b, "text")]
-    return "\n".join(parts) if parts else "(no output)"
+    text = "\n".join(parts) if parts else "(no output)"
+    if re.search(r"<(html|table|tbody|div|span)\b", text, re.IGNORECASE):
+        text = _strip_html(text)
+    return text
 
 
 def _make_handler(session: ClientSession, original_name: str):

@@ -53,6 +53,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agent_loop import run_react_agent
+from marketing.orchestrator import run_marketing_agent
 from conversation_log import append_turn, history_summary_for_prompt, trim_log
 from llm import JARVIS_SYSTEM_PROMPT, ChatMessage, DeepSeekClient
 from memory import describe_memory_status, get_memory
@@ -498,6 +499,38 @@ _TOOL_KEYWORDS: frozenset[str] = frozenset({
 })
 
 
+_MARKETING_KEYWORDS: frozenset[str] = frozenset({
+    # brand
+    "khas bazaar", "khasbazaar",
+    # content generation
+    "caption", "write a caption", "content calendar", "reel brief", "reel idea",
+    "story sequence", "hashtag", "content plan", "what to post", "post idea",
+    "marketing", "instagram content", "facebook content",
+    # social posting
+    "post to instagram", "post to facebook", "post this", "post the photo",
+    "post the reel", "schedule post", "upload to instagram",
+    # ai generation
+    "generate image", "generate photo", "generate a reel", "generate video",
+    "generate a video", "generate a photo", "generate a lifestyle", "generate lifestyle",
+    "lifestyle image", "lifestyle photo", "lifestyle shot", "product image", "product photo",
+    "product shot", "flatlay", "flat lay", "create an image", "create a photo",
+    "ai photo", "ai video", "imagen", "veo", "create a visual", "ai image",
+    "generate for", "image for the", "photo for the", "image of the",
+    # analytics
+    "post insights", "account insights", "instagram analytics", "how did",
+    "engagement rate", "how many followers", "reach this week",
+    # strategy
+    "growth strategy", "what should i post", "weekly review",
+    "how to grow", "more followers", "go viral", "improve our page",
+    "add product", "new product", "update price",
+})
+
+
+def _needs_marketing(user_text: str) -> bool:
+    lower = user_text.lower()
+    return any(kw in lower for kw in _MARKETING_KEYWORDS)
+
+
 def _needs_tools(user_text: str) -> bool:
     lower = user_text.lower()
     return any(kw in lower for kw in _TOOL_KEYWORDS)
@@ -608,14 +641,25 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
             session.session_topics.append(words[0].lower())
 
         full_system = await _build_system(session, user_text)
-        use_tools = _needs_tools(user_text)
+        use_marketing = _needs_marketing(user_text)
+        use_tools = use_marketing or _needs_tools(user_text)
         full_reply = ""
         sentence_buf = ""
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
         async def produce() -> None:
             nonlocal sentence_buf, full_reply
-            if use_tools:
+            if use_marketing:
+                await tts_queue.put(_pick_acknowledgment(user_text))
+                token_stream = run_marketing_agent(
+                    client=deepseek,
+                    user_message=user_text,
+                    history_messages=_history_dicts_only(session.history),
+                    on_thinking_step=lambda label: _safe_send_json(
+                        websocket, {"type": "thinking_step", "label": label}
+                    ),
+                )
+            elif use_tools:
                 await tts_queue.put(_pick_acknowledgment(user_text))
                 token_stream = run_react_agent(
                     client=deepseek,
@@ -750,7 +794,8 @@ async def _run_turn(
         # and stream directly — saves ~500ms-1s per turn.
         # Tool queries (weather, search, calendar, files) keep the ReAct loop
         # and get an acknowledgment phrase to cover the extra latency.
-        use_tools = _needs_tools(user_text)
+        use_marketing = _needs_marketing(user_text)
+        use_tools = use_marketing or _needs_tools(user_text)
         if use_tools:
             await tts_queue.put(_pick_acknowledgment(user_text))
 
@@ -760,8 +805,15 @@ async def _run_turn(
         async def produce() -> None:
             nonlocal sentence_buf, full_reply
             try:
-                if use_tools:
-                    token_stream: AsyncIterator[str] = run_react_agent(
+                if use_marketing:
+                    token_stream: AsyncIterator[str] = run_marketing_agent(
+                        client=deepseek,
+                        user_message=user_text,
+                        history_messages=history_msgs,
+                        on_thinking_step=on_thinking_step,
+                    )
+                elif use_tools:
+                    token_stream = run_react_agent(
                         client=deepseek,
                         full_system=full_system,
                         user_message=user_text,
@@ -926,13 +978,16 @@ def _drain_sentences(buf: str) -> list[str]:
 
     Last element is the remaining (incomplete) tail — caller keeps it.
     """
-    # Split greedily on .!? followed by whitespace.
     out: list[str] = []
     start = 0
     i = 0
     while i < len(buf):
         ch = buf[i]
         if ch in ".!?":
+            # Skip "N." — it's a list marker or decimal, not a sentence end.
+            if ch == "." and i > 0 and buf[i - 1].isdigit():
+                i += 1
+                continue
             j = i + 1
             while j < len(buf) and buf[j].isspace():
                 j += 1
@@ -983,7 +1038,12 @@ def _clean_for_tts(text: str) -> str:
     # Punctuation / symbol substitutions
     t = t.replace("—", ", ").replace("–", " to ")
     t = t.replace("…", "...")
-    t = t.replace("◈", "").replace("·", "")
+    t = t.replace("•", " ").replace("◈", "").replace("·", "")
+    # Mid-sentence " - " used as a separator → natural pause
+    t = re.sub(r"\s+-\s+", ", ", t)
+    # Numbered list remnants: "1." alone or "1. " mid-text → strip the dot
+    t = re.sub(r"\b(\d+)\.\s+", r"\1 ", t)
+    t = re.sub(r"\b(\d+)\.\s*$", r"\1", t)
     # Stray markdown chars that survived the above passes
     t = t.replace("*", "").replace("_", " ").replace("#", "").replace("`", "")
     # Collapse whitespace

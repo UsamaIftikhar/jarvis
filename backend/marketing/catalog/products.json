@@ -1,0 +1,246 @@
+{
+  "brand": {
+    "name": "Khas Bazaar",
+    "urdu_name": "خاص بازار",
+    "tagline": "Apne ghar ko khas banao",
+    "aesthetic": "boho-chic, modern aesthetic, Nordic minimalism",
+    "palette": ["nude", "beige", "dusty rose", "white", "gold", "forest green", "cream"],
+    "target_audience": "Pakistani women 20-32 who want Pinterest-worthy aesthetic homes",
+    "market": "Pakistan (Lahore, Karachi, Islamabad)",
+    "conversion_channel": "WhatsApp DM / Instagram DM",
+    "instagram_handle": "@khasbazaar",
+    "peak_post_time": "20:00-22:00 PKT",
+    "language_style": "Hinglish — 70% English, 30% natural Urdu words woven in. Never formal Urdu."
+  },
+  "products": [
+    {
+      "id": "bunny-tail-stems",
+      "image_path": "data/products/bunny_tail_grass.jpg",
+      "name": "Bunny Tail Grass Stems",
+      "urdu_name": "خرگوش دم گھاس",
+      "category": "dried-florals",
+      "description": "Natural dried bunny tail grass stems in cream-beige. Soft, fluffy tips on delicate natural stems. Zero maintenance — no water, no sunlight needed. Perfect for vases, flat lays, and shelf styling.",
+      "style_tags": ["boho", "natural", "dried-florals", "minimalist", "neutral", "pampas-aesthetic"],
+      "colors": ["cream", "beige", "natural"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Extreme close-up of the fluffy tips — pure texture ASMR content",
+        "Styled inside the gold-rim ribbed vase on a shelf",
+        "Flat lay on dark teal velvet background (matches your shoot setup)",
+        "How-to arrangement tutorial Reel",
+        "Zero maintenance angle — no water, never wilts, always beautiful",
+        "Gift wrapping angle — bundle with a vase as a gift set"
+      ],
+      "scroll_stop_hooks": [
+        "Yeh grass kyon sab ke Instagram pe aa rahi hai? 🌾",
+        "No water. No sunlight. Always beautiful. ✨",
+        "The softest thing your home is missing 🤍",
+        "Ghar mein jungle nahi chahiye, bas thoda nature chahiye 🌿"
+      ],
+      "best_formats": ["close-up reel", "flat lay photo", "styling tutorial carousel", "ASMR texture reel"],
+      "seasonal": ["year-round", "eid-decor", "wedding-season", "gifting"]
+    },
+    {
+      "id": "dusty-rose-vase",
+      "image_path": "data/products/dusty_rose_vase.jpg",
+      "name": "Dusty Rose Speckled Ceramic Vase",
+      "urdu_name": "گلابی سیرامک گلدان",
+      "category": "vases",
+      "description": "Bulbous hand-finished ceramic vase in dusty rose-mauve with natural speckle texture and gold detail accent. Elegant narrow neck. Pairs beautifully with bunny tail stems or dried pampas.",
+      "style_tags": ["boho", "feminine", "ceramic", "minimalist", "rose", "elegant"],
+      "colors": ["dusty rose", "mauve", "gold accent"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Solo hero shot — clean white or grey background, dramatic lighting",
+        "Styled with bunny tail stems — the perfect pair",
+        "On a vanity/dressing table — feminine bedroom aesthetic",
+        "Color palette flatlay — dusty rose vase + neutral accessories",
+        "Before/after: empty shelf vs shelf with this vase"
+      ],
+      "scroll_stop_hooks": [
+        "Ye rang kisi ko bhi pasand aata hai 🌸",
+        "Ek guldaan jo har jagah fit hojaye ✨",
+        "Your bedroom corner is missing this 💗",
+        "Dusty rose era has entered Pakistan 🌷"
+      ],
+      "best_formats": ["hero product photo", "lifestyle reel", "styling carousel"],
+      "seasonal": ["year-round", "valentines", "eid-gifting"]
+    },
+    {
+      "id": "pearl-bead-planters",
+      "image_path": "data/products/pearl_bead_planters.jpg",
+      "name": "Pearl Bead Ceramic Planters (Set of 2)",
+      "urdu_name": "موتی والے گملے",
+      "category": "planters",
+      "description": "White ceramic planters with raised pearl/bead texture in a diagonal pattern. Cylindrical shape with flat base. Comes with double-ball topiary artificial plants. Elegant and distinctive.",
+      "style_tags": ["elegant", "white", "textured", "pearl", "planter", "artificial-plant"],
+      "colors": ["white", "pearl white"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Pair shot — two planters side by side, symmetry content",
+        "Close-up of the bead texture — tactile/ASMR appeal",
+        "Styled on a bookshelf or console table",
+        "Room corner makeover — before/after",
+        "Zero maintenance plant parent angle"
+      ],
+      "scroll_stop_hooks": [
+        "Fake plants jo real se behtar lagein 🌿",
+        "Ye texture dekha hai? 😍 Close-up mein aur bhi sundar hai",
+        "Plant parent nahi banna? Koi baat nahi 🌱",
+        "Your bookshelf needs a glow-up 📚✨"
+      ],
+      "best_formats": ["close-up texture reel", "symmetry photo", "shelf styling reel"],
+      "seasonal": ["year-round", "home-refresh", "gifting"]
+    },
+    {
+      "id": "gold-rim-ribbed-set-nude",
+      "image_path": "data/products/gold_rim_ribbed_set_nude.jpg",
+      "name": "Ribbed Ceramic Set — Nude Gold (Vases + Tray)",
+      "urdu_name": "ریبڈ سیٹ — نیوڈ گولڈ",
+      "category": "decor-sets",
+      "description": "A curated set of ribbed ceramic pieces in nude/beige with white and real gold foil rim detailing. Includes tall ribbed vase, round ribbed jar with lid, and oval tray. Comes with small decorative birds and bunny tail accents. The hero product of the collection.",
+      "style_tags": ["boho", "gold-foil", "ribbed", "nude", "set", "premium", "gift-worthy", "hero-product"],
+      "colors": ["nude", "beige", "white", "gold foil"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Full set styled hero shot — THE signature content piece",
+        "Gold foil rim close-up — premium feel",
+        "Unboxing / arranging the set Reel — very satisfying",
+        "Coffee table / shelf styling with this set as centerpiece",
+        "Gift set angle — birthday, Eid, bridal shower",
+        "Slow-motion Reel of arranging pieces on a tray"
+      ],
+      "scroll_stop_hooks": [
+        "Ek set jo puri shelf badal de ✨",
+        "Gold edges + neutral tones = perfection 🤍",
+        "Mehmaan samjhenge ye kisi designer ka hai 😏",
+        "Ye set dekh ke ghar khareedne ka dil karta hai 🏡",
+        "Eid gift idea? Done. 🎁"
+      ],
+      "best_formats": ["hero reel", "slow-motion styling reel", "carousel product feature", "unboxing reel"],
+      "seasonal": ["year-round", "eid-gifting", "wedding-gifts", "housewarming", "priority-always"]
+    },
+    {
+      "id": "white-ribbed-set-gold",
+      "image_path": null,
+      "name": "White Ribbed Ceramic Set with Gold Foil",
+      "urdu_name": "سفید ریبڈ سیٹ — گولڈ فوائل",
+      "category": "decor-sets",
+      "description": "White ribbed ceramic decorative set including a scalloped jar with dome lid, ribbed vase, and oval tray — all with gold foil edge detailing. Clean, elegant, and timeless. Perfect for dressing tables, shelves, and gifting.",
+      "style_tags": ["white", "gold-foil", "ribbed", "elegant", "set", "dressing-table", "gift-worthy"],
+      "colors": ["white", "gold foil"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Dressing table / vanity styling",
+        "Bridal/walima gifting angle — huge in Pakistan",
+        "Close-up of scalloped jar lid — distinctive shape",
+        "White + gold aesthetic flatlay",
+        "Side-by-side with the nude set showing colour options"
+      ],
+      "scroll_stop_hooks": [
+        "Bridal gift ideas that actually impress 💍",
+        "Sada safed, lekin itna khoobsurat 🤍",
+        "Ye dressing table pe rakho aur dekho farq ✨",
+        "White + gold = timeless. Hamesha. 🏆"
+      ],
+      "best_formats": ["hero photo", "dressing table styling reel", "gift unboxing reel"],
+      "seasonal": ["year-round", "wedding-season", "eid-gifting", "bridal-shower"]
+    },
+    {
+      "id": "eiffel-tower-figurine",
+      "image_path": "data/products/eiffel_tower_figurine.jpg",
+      "name": "Eiffel Tower Metal Figurine",
+      "urdu_name": "ایفل ٹاور فگرین",
+      "category": "figurines",
+      "description": "Detailed bronze/antique gold metal Eiffel Tower decorative figurine. Desk, shelf, or bookcase accent. Appeals to travel lovers and aesthetic home decorators.",
+      "style_tags": ["travel", "bronze", "metal", "figurine", "paris", "desk-decor", "gift"],
+      "colors": ["bronze", "antique gold", "dark metal"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Styled on a desk with books and a candle — study aesthetic",
+        "Paris/travel lover gifting angle",
+        "Bookshelf vignette with other decor items",
+        "Close-up of the detailed metalwork"
+      ],
+      "scroll_stop_hooks": [
+        "Paris nahi ja sakte? Koi baat nahi 🗼",
+        "Travel lover ke liye perfect gift 🎁",
+        "Desk goals for the aesthetics obsessed ✨",
+        "Bonjour from your shelf 🇫🇷"
+      ],
+      "best_formats": ["lifestyle photo", "desk styling reel", "gift idea carousel"],
+      "seasonal": ["year-round", "gifting", "valentines", "back-to-school"]
+    },
+    {
+      "id": "globe-pot-fern",
+      "image_path": "data/products/globe_pot_fern.jpg",
+      "name": "White Globe Ceramic Pot with Artificial Fern",
+      "urdu_name": "گلوب گملہ فرن کے ساتھ",
+      "category": "planters",
+      "description": "Smooth white spherical ceramic pot with lush artificial fern/grass plant. Compact and versatile — works on desks, shelves, bathroom counters, windowsills.",
+      "style_tags": ["white", "minimal", "compact", "desk-decor", "artificial-plant", "fern"],
+      "colors": ["white", "forest green"],
+      "price": null,
+      "status": "active",
+      "content_angles": [
+        "Desk / study corner aesthetic",
+        "Bathroom shelf styling",
+        "Compact home — small space big impact angle",
+        "Budget-friendly starter decor piece"
+      ],
+      "scroll_stop_hooks": [
+        "Chota sa pot, bara sa farq 🌿",
+        "Bathroom bhi aesthetic ho sakta hai ✨",
+        "Rs [X] mein ghar badal do 🏡",
+        "Zero maintenance plant life 🌱"
+      ],
+      "best_formats": ["desk styling photo", "small space reel", "comparison carousel"],
+      "seasonal": ["year-round", "home-refresh"]
+    }
+  ],
+  "content_pillars": [
+    {
+      "name": "Hero Shots",
+      "description": "Pure product beauty — clean background, perfect lighting, no distractions",
+      "frequency": "2x per week",
+      "formats": ["single photo", "carousel"]
+    },
+    {
+      "name": "Lifestyle",
+      "description": "Product in a real Pakistani home setting — shelf, coffee table, bedroom corner",
+      "frequency": "3x per week",
+      "formats": ["reel", "photo"]
+    },
+    {
+      "name": "Education",
+      "description": "How to style, what goes with what, care tips, room transformation guides",
+      "frequency": "2x per week",
+      "formats": ["carousel", "reel tutorial"]
+    },
+    {
+      "name": "Behind the Scenes",
+      "description": "Packing orders, sourcing, arranging, the human side of Khas Bazaar",
+      "frequency": "3-5 stories/day + 1 reel/week",
+      "formats": ["stories", "reel"]
+    },
+    {
+      "name": "Social Proof",
+      "description": "Customer setups, DM screenshots, reviews, reposted content",
+      "frequency": "Whenever received",
+      "formats": ["repost", "stories"]
+    }
+  ],
+  "hashtag_strategy": {
+    "tier1_broad": ["#homedecor", "#homeaesthetics", "#aestheticroom", "#interiordecor", "#homeinspo", "#roomdecor"],
+    "tier2_pakistan": ["#pakistanihome", "#karachidecor", "#lahoredecor", "#pakistanishopping", "#pakistanihomedecor", "#homepakistan", "#shoponline", "#onlineshopping"],
+    "tier3_niche": ["#bunnytailgrass", "#pampasgrass", "#ceramicvase", "#bohodecor", "#aesthetichome", "#minimalhomedecor", "#golddecor", "#neutralhome", "#shelfie"],
+    "tier4_brand": ["#KhasBazaar", "#خاص_بازار"],
+    "usage_rule": "Use 5 tier1 + 4 tier2 + 4 tier3 + 2 tier4 = 15 hashtags per post. Never repeat same set twice in a row."
+  }
+}
