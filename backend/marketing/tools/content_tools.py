@@ -93,6 +93,28 @@ PERFORMANCE PRINCIPLES:
 - Carousel posts get 3x more swipes if slide 1 says "swipe for the secret →"
 """
 
+# English-only captions for Instagram posting (auto-generated at publish time).
+_INSTAGRAM_POST_CAPTION_SYSTEM = """You write Instagram captions for Khas Bazaar, a Pakistani home decor brand.
+
+LANGUAGE (critical): English only. No Urdu. No Hinglish. No Roman Urdu.
+
+BRAND:
+- Aesthetic: boho-chic, modern minimalist
+- Palette: nude, beige, white, gold
+- Audience: Pakistani women who love aesthetic home decor
+- CTA style: DM to order, comment PRICE, WhatsApp in bio
+
+CAPTION STRUCTURE:
+Line 1: scroll-stopping hook (max 10 words)
+[blank line]
+2-3 lines: product story / lifestyle connection in natural English
+[blank line]
+One CTA line
+[blank line]
+Exactly 15 hashtags on one line (English hashtags only)
+
+Never use structural labels. Never write "Caption:" or "Hook:". Output only the caption."""
+
 
 import re as _re
 
@@ -130,6 +152,91 @@ async def _llm_content_call(prompt: str, max_tokens: int = 1000) -> str:
         resp = await client.post(f"{base_url}/v1/chat/completions", headers=headers, json=payload)
         resp.raise_for_status()
     return (resp.json().get("choices", [{}])[0].get("message") or {}).get("content", "")
+
+
+async def _llm_instagram_post_caption_call(prompt: str, max_tokens: int = 500) -> str:
+    """English-only caption generation for Instagram publish flow."""
+    api_key  = os.environ.get("DEEPSEEK_API_KEY", "")
+    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    model    = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+    payload  = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _INSTAGRAM_POST_CAPTION_SYSTEM},
+            {"role": "user",   "content": prompt},
+        ],
+        "stream": False,
+        "temperature": 0.75,
+        "max_tokens": max_tokens,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{base_url}/v1/chat/completions", headers=headers, json=payload)
+        resp.raise_for_status()
+    return (resp.json().get("choices", [{}])[0].get("message") or {}).get("content", "")
+
+
+def _first_caption(text: str) -> str:
+    """Return just the first caption variation (captions are split by ---)."""
+    return (text or "").split("\n---", 1)[0].strip().lstrip("-").strip()
+
+
+async def generate_post_caption(product_id: str, extra_context: str = "") -> str:
+    """Generate ONE ready-to-post caption with hashtags for a product.
+
+    Used by the posting flow so every post has an engaging caption even when
+    the user didn't ask for one separately. Falls back to a generic Khas Bazaar
+    caption if the product is unknown.
+    """
+    catalog_product = None
+    if product_id:
+        try:
+            catalog = _load_catalog()
+            catalog_product = next(
+                (p for p in catalog["products"] if p["id"] == product_id), None
+            )
+        except Exception:
+            catalog_product = None
+
+    if catalog_product:
+        hooks = catalog_product.get("scroll_stop_hooks", [])
+        hook_example = random.choice(hooks) if hooks else ""
+        angles = catalog_product.get("content_angles", [])
+        angle_example = random.choice(angles) if angles else ""
+        prompt = f"""Write ONE Instagram caption for this product.
+
+Product: {catalog_product['name']}
+Description: {catalog_product['description']}
+{f"Hook inspiration (make your own): {hook_example}" if hook_example else ""}
+{f"Content angle: {angle_example}" if angle_example else ""}
+{f"Additional context: {extra_context}" if extra_context else ""}
+
+English only. Include hook, body, CTA, and exactly 15 hashtags.
+Output only the caption — no labels, no markdown."""
+        try:
+            caption = _strip_labels(
+                await _llm_instagram_post_caption_call(prompt, max_tokens=450)
+            )
+            return _first_caption(caption)
+        except Exception as exc:
+            logger.warning("product caption generation failed: %s", exc)
+            return ""
+
+    # No product reference — still produce an engaging branded caption.
+    prompt = (
+        "Write ONE Instagram caption for a Khas Bazaar home decor photo.\n"
+        f"{f'Context: {extra_context}' if extra_context else ''}\n"
+        "Format: scroll-stopping hook (max 10 words), blank line, 2-3 English "
+        "body lines, blank line, one CTA, blank line, exactly 15 hashtags on one "
+        "line. English only. Output only the caption — no labels, no markdown."
+    )
+    try:
+        return _first_caption(
+            _strip_labels(await _llm_instagram_post_caption_call(prompt, max_tokens=400))
+        )
+    except Exception as exc:
+        logger.warning("fallback caption generation failed: %s", exc)
+        return ""
 
 
 async def _generate_caption(args: dict[str, Any]) -> str:
@@ -187,7 +294,16 @@ DM karo order ke liye ✨
 [caption 3]
 """
         result = await _llm_content_call(prompt, max_tokens=1200)
-        return _strip_labels(result)
+        cleaned = _strip_labels(result)
+        # Remember the first variation so "post it with the generated caption"
+        # can reuse it in a later turn.
+        try:
+            from .. import state
+            first = cleaned.split("\n---", 1)[0].strip().lstrip("-").strip()
+            state.set_last_caption(first, product_id)
+        except Exception:
+            logger.debug("could not record last caption", exc_info=True)
+        return cleaned
     except Exception as exc:
         logger.exception("generate_caption failed")
         return f"Content generation error: {exc}"

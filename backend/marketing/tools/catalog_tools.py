@@ -18,6 +18,17 @@ def _load_catalog() -> dict[str, Any]:
         return json.load(f)
 
 
+def product_display_name(product_id: str) -> str:
+    """Human-readable product name for voice/UI replies."""
+    product_id = (product_id or "").strip()
+    if not product_id:
+        return ""
+    for product in _load_catalog().get("products", []):
+        if product.get("id") == product_id:
+            return str(product.get("name") or product_id.replace("-", " ").title())
+    return product_id.replace("-", " ").title()
+
+
 def _save_catalog(catalog: dict[str, Any]) -> None:
     with open(_CATALOG_PATH, "w", encoding="utf-8") as f:
         json.dump(catalog, f, ensure_ascii=False, indent=2)
