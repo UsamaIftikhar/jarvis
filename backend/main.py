@@ -509,6 +509,9 @@ _MARKETING_KEYWORDS: frozenset[str] = frozenset({
     # social posting
     "post to instagram", "post to facebook", "post this", "post the photo",
     "post the reel", "schedule post", "upload to instagram",
+    "post it on insta", "post on insta", "post to insta", "post it on instagram",
+    "post on instagram", "publish to instagram", "publish on instagram",
+    "post it to insta", "post it", "via buffer", "to buffer", "buffer",
     # ai generation
     "generate image", "generate photo", "generate a reel", "generate video",
     "generate a video", "generate a photo", "generate a lifestyle", "generate lifestyle",
@@ -526,14 +529,36 @@ _MARKETING_KEYWORDS: frozenset[str] = frozenset({
 })
 
 
+_SOCIAL_PLATFORM_WORDS = ("instagram", "insta", "facebook", "buffer")
+_SOCIAL_ACTION_WORDS = ("post", "publish", "upload", "share", "schedule")
+
+
 def _needs_marketing(user_text: str) -> bool:
+    try:
+        from marketing.state import PENDING_GENERATE_AND_POST, get_pending_action
+        if get_pending_action() == PENDING_GENERATE_AND_POST:
+            return True
+    except Exception:
+        pass
     lower = user_text.lower()
-    return any(kw in lower for kw in _MARKETING_KEYWORDS)
+    if any(kw in lower for kw in _MARKETING_KEYWORDS):
+        return True
+    # Catch any phrasing that pairs a social platform with a posting action,
+    # e.g. "post the recent image on Instagram", "share this on insta".
+    if any(p in lower for p in _SOCIAL_PLATFORM_WORDS) and any(
+        a in lower for a in _SOCIAL_ACTION_WORDS
+    ):
+        return True
+    return False
 
 
-def _needs_tools(user_text: str) -> bool:
+def _needs_tools(user_text: str, history_messages: list[dict[str, Any]] | None = None) -> bool:
+    from email_summarize import user_asks_about_email
+
     lower = user_text.lower()
-    return any(kw in lower for kw in _TOOL_KEYWORDS)
+    if any(kw in lower for kw in _TOOL_KEYWORDS):
+        return True
+    return user_asks_about_email(user_text, history_messages)
 
 
 def _maybe_early_flush(buf: str, threshold: int = 90) -> tuple[str, str]:
@@ -641,10 +666,12 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
             session.session_topics.append(words[0].lower())
 
         full_system = await _build_system(session, user_text)
+        history_msgs = _history_dicts_only(session.history)
         use_marketing = _needs_marketing(user_text)
-        use_tools = use_marketing or _needs_tools(user_text)
+        use_tools = use_marketing or _needs_tools(user_text, history_msgs)
         full_reply = ""
         sentence_buf = ""
+        display = _DisplayStream()
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
         async def produce() -> None:
@@ -654,7 +681,7 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
                 token_stream = run_marketing_agent(
                     client=deepseek,
                     user_message=user_text,
-                    history_messages=_history_dicts_only(session.history),
+                    history_messages=history_msgs,
                     on_thinking_step=lambda label: _safe_send_json(
                         websocket, {"type": "thinking_step", "label": label}
                     ),
@@ -665,7 +692,7 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
                     client=deepseek,
                     full_system=full_system,
                     user_message=user_text,
-                    history_messages=_history_dicts_only(session.history),
+                    history_messages=history_msgs,
                     on_thinking_step=lambda label: _safe_send_json(
                         websocket, {"type": "thinking_step", "label": label}
                     ),
@@ -677,7 +704,9 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
 
             async for delta in token_stream:
                 full_reply += delta
-                await _send_json(websocket, {"type": "token", "text": delta})
+                display_delta = display.push(delta)
+                if display_delta:
+                    await _send_json(websocket, {"type": "token", "text": display_delta})
                 sentence_buf += delta
                 flushable = _drain_sentences(sentence_buf)
                 if flushable:
@@ -706,19 +735,20 @@ async def _run_text_turn(websocket: WebSocket, session: "Session", user_text: st
 
         await asyncio.gather(produce(), consume())
 
-        if full_reply.strip():
-            await _send_json(websocket, {"type": "final", "text": full_reply.strip()})
+        clean_reply = display.clean or _clean_for_display(full_reply.strip())
+        if clean_reply:
+            await _send_json(websocket, {"type": "final", "text": clean_reply})
 
         session.history.append(ChatMessage(role="user", content=user_text))
-        session.history.append(ChatMessage(role="assistant", content=full_reply.strip()))
+        session.history.append(ChatMessage(role="assistant", content=clean_reply))
         session.history = _trim_history(session.history)
         LAST_INTERACTION_TS = time.time()
 
         mem = get_memory()
-        if mem.enabled and full_reply.strip():
-            asyncio.create_task(mem.remember(f"User: {user_text}\nAssistant: {full_reply.strip()}"))
-        if full_reply.strip():
-            append_turn(user_text, full_reply.strip())
+        if mem.enabled and clean_reply:
+            asyncio.create_task(mem.remember(f"User: {user_text}\nAssistant: {clean_reply}"))
+        if clean_reply:
+            append_turn(user_text, clean_reply)
 
     except asyncio.CancelledError:
         raise
@@ -788,6 +818,7 @@ async def _run_turn(
         history_msgs = _history_dicts_only(session.history)
         full_reply = ""
         sentence_buf = ""
+        display = _DisplayStream()
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
         # Fast path: conversational queries skip the ReAct decision round-trip
@@ -795,7 +826,7 @@ async def _run_turn(
         # Tool queries (weather, search, calendar, files) keep the ReAct loop
         # and get an acknowledgment phrase to cover the extra latency.
         use_marketing = _needs_marketing(user_text)
-        use_tools = use_marketing or _needs_tools(user_text)
+        use_tools = use_marketing or _needs_tools(user_text, history_msgs)
         if use_tools:
             await tts_queue.put(_pick_acknowledgment(user_text))
 
@@ -832,8 +863,10 @@ async def _run_turn(
 
                 async for delta in token_stream:
                     full_reply += delta
+                    display_delta = display.push(delta)
+                    if display_delta:
+                        await _send_json(websocket, {"type": "token", "text": display_delta})
                     sentence_buf += delta
-                    await _send_json(websocket, {"type": "token", "text": delta})
                     # Hard sentence boundaries first
                     flushable = _drain_sentences(sentence_buf)
                     if flushable:
@@ -850,7 +883,9 @@ async def _run_turn(
                 tail = sentence_buf.strip()
                 if tail:
                     await tts_queue.put(tail)
-                await _send_json(websocket, {"type": "final", "text": full_reply})
+                clean_reply = display.clean or _clean_for_display(full_reply)
+                if clean_reply:
+                    await _send_json(websocket, {"type": "final", "text": clean_reply})
             finally:
                 await tts_queue.put(None)
 
@@ -882,18 +917,19 @@ async def _run_turn(
                 lazy_started=False,
             )
 
+        clean_reply = display.clean or _clean_for_display(full_reply.strip())
         session.history.append(ChatMessage(role="user", content=user_text))
-        session.history.append(ChatMessage(role="assistant", content=full_reply))
+        session.history.append(ChatMessage(role="assistant", content=clean_reply))
         session.history = _trim_history(session.history)
-        logger.info("jarvis: %s", full_reply)
+        logger.info("jarvis: %s", clean_reply)
         LAST_INTERACTION_TS = time.time()
         increment_topic(" ".join(user_text.split()[:5]).lower())
-        schedule_profile_update(user_text, full_reply, deepseek)
+        schedule_profile_update(user_text, clean_reply, deepseek)
         mem = get_memory()
-        if mem.enabled and full_reply.strip():
-            asyncio.create_task(mem.remember(f"User: {user_text}\nAssistant: {full_reply.strip()}"))
-        if full_reply.strip():
-            append_turn(user_text, full_reply.strip())
+        if mem.enabled and clean_reply:
+            asyncio.create_task(mem.remember(f"User: {user_text}\nAssistant: {clean_reply}"))
+        if clean_reply:
+            append_turn(user_text, clean_reply)
 
     except asyncio.CancelledError:
         logger.info("turn cancelled")
@@ -1023,6 +1059,11 @@ _PAREN_URL      = re.compile(r"\(https?://[^\)]+\)")
 
 def _clean_for_tts(text: str) -> str:
     """Strip markdown, URLs and special characters that TTS should not speak aloud."""
+    return _clean_for_display(text)
+
+
+def _clean_for_display(text: str) -> str:
+    """Plain text for the Jarvis HUD and conversation history."""
     t = _MD_CODE_BLOCK.sub("", text)
     t = _PAREN_URL.sub("", t)       # remove (https://...) first
     t = _MD_BOLD_ITALIC.sub(r"\1", t)
@@ -1050,6 +1091,23 @@ def _clean_for_tts(text: str) -> str:
     t = t.replace("\n", " ")
     t = _MULTI_SPACE.sub(" ", t)
     return t.strip()
+
+
+class _DisplayStream:
+    """Incremental markdown stripper for streamed LLM tokens."""
+
+    def __init__(self) -> None:
+        self.raw = ""
+        self.clean = ""
+
+    def push(self, delta: str) -> str:
+        if not delta:
+            return ""
+        self.raw += delta
+        new_clean = _clean_for_display(self.raw)
+        out = new_clean[len(self.clean) :]
+        self.clean = new_clean
+        return out
 
 
 async def _stream_tts_with_lazy_start(

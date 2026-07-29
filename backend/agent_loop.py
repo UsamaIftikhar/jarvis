@@ -12,6 +12,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+from email_summarize import build_factual_email_reply, user_asks_about_email
 from llm import DeepSeekClient
 from tools import run_tool
 from tools.registry import REGISTRY
@@ -66,6 +67,7 @@ Return ONE JSON object only (no markdown):
 
 Rules:
 - Use a tool if one applies. Do NOT answer from memory.
+- For email/inbox questions: ONLY gmail__search_emails and gmail__read_email output is real inbox data. Never invent subjects, amounts, times, or senders — not from memory, not from chat history.
 - Only use "final_answer" when no tool applies OR after you already have tool results in the scratchpad.
 - CRITICAL: If the user is asking you to DO something (post, send, create, review, delete, upload, submit, reply) you MUST call a tool. Never confirm an action without calling the corresponding tool first — doing so is a lie.
 - Never say you lack access, credentials, or settings — the tools handle that.
@@ -198,11 +200,24 @@ async def run_react_agent(
     write_succeeded  = any(kw in result_text for kw in _WRITE_SUCCESS)
     had_error        = any(kw in result_text for kw in _ERRORS)
     user_wants_write = any(kw in user_message.lower() for kw in _WRITE_INTENT)
+    user_wants_email = user_asks_about_email(user_message)
     no_tool_ran      = not scratch_lines
 
     # Short-circuit: user wanted an action but no tool ran at all (LLM went straight to final_answer)
     if user_wants_write and no_tool_ran:
         yield "I'm sorry, sir — I wasn't able to execute that action. Please try again."
+        return
+
+    if user_wants_email and no_tool_ran:
+        yield (
+            "I need to check your inbox first, sir — I couldn't reach Gmail just now. "
+            "Please ask me again."
+        )
+        return
+
+    factual_email = build_factual_email_reply(scratch_lines, user_message)
+    if factual_email:
+        yield factual_email
         return
 
     # Short-circuit: tool ran but errored, and write didn't succeed
@@ -228,6 +243,14 @@ async def run_react_agent(
             "Tell the user plainly that you were unable to complete it and suggest they try again."
         )
         final_temp = 0.2
+    elif user_wants_email:
+        honesty_note = (
+            "\n\nEMAIL FACTS RULE (mandatory): Mention ONLY senders, subjects, dates, "
+            "amounts, and due dates that appear verbatim in the Internal tool notes. "
+            "Never guess or round amounts. Never invent subjects or times. "
+            "If a detail is missing from the tool output, say you don't see it in the email."
+        )
+        final_temp = 0.1
     else:
         honesty_note = ""
         final_temp = 0.65

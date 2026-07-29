@@ -171,7 +171,7 @@ Scratchpad:
             for line in scratch_lines
         )
 
-        _SUCCESS = ("created", "added", "posted", "sent", "saved", "updated", "generated", "scheduled", "published")
+        _SUCCESS = ("created", "added", "posted", "sent", "saved", "updated", "generated", "scheduled", "published", "via buffer")
         _ERRORS  = ("error", "Error", "failed", "unavailable", "Tool error", "blocked")
 
         had_error = any(kw in result_text for kw in _ERRORS)

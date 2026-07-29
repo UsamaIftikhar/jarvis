@@ -14,8 +14,11 @@ import socket
 import subprocess
 import time
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageDraw
 
 from .registry import MARKETING_REGISTRY, MarketingToolEntry
 
@@ -32,6 +35,117 @@ _CHROME_USER_DATA = os.path.expanduser("~/Library/Application Support/Google/Chr
 _JARVIS_DEBUG_PROFILE = Path.home() / "Library" / "Application Support" / "Jarvis Chrome Debug"
 _DEBUG_PORT = 9222
 _GEMINI_URL = "https://gemini.google.com"
+
+_BRAND_STYLE = (
+    "Aesthetic: boho-chic, modern minimalist. Palette: nude, beige, white, gold."
+)
+_CLEAN_IMAGE_RULES = (
+    "Do NOT add any brand logos, text overlays, labels, or watermarks on the image. "
+    "No Khas Bazaar branding on the image. No AI watermarks. No Gemini logo or sparkle. "
+    "Clean product photography only — just the product and scene."
+)
+
+
+def _strip_gemini_watermark(img_bytes: bytes) -> bytes:
+    """Remove the Gemini sparkle badge from the bottom-right corner."""
+    try:
+        img = Image.open(BytesIO(img_bytes)).convert("RGB")
+        w, h = img.size
+        badge_w = max(72, min(140, w // 10))
+        badge_h = max(40, min(90, h // 14))
+        x0, y0 = w - badge_w, h - badge_h
+
+        # Sample pixels just above/left of the badge for a natural fill.
+        samples: list[tuple[int, int, int]] = []
+        for x in range(max(0, x0 - 24), x0):
+            for y in range(max(0, y0 - 16), h - badge_h):
+                samples.append(img.getpixel((x, y)))
+        if not samples:
+            for x in range(max(0, x0 - 8), w - badge_w):
+                for y in range(max(0, y0 - 8), y0):
+                    samples.append(img.getpixel((x, y)))
+
+        if samples:
+            fill = (
+                sum(c[0] for c in samples) // len(samples),
+                sum(c[1] for c in samples) // len(samples),
+                sum(c[2] for c in samples) // len(samples),
+            )
+            ImageDraw.Draw(img).rectangle([x0, y0, w, h], fill=fill)
+
+        out = BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception as exc:
+        logger.warning("watermark cleanup failed, using original: %s", exc)
+        return img_bytes
+
+
+def _build_product_prompt(product_name: str, scene: str) -> str:
+    scene = scene or "a beautiful boho lifestyle home setting"
+    return (
+        f"For Khas Bazaar (خاص بازار), a Pakistani home decor brand. {_BRAND_STYLE} "
+        f"I'm sharing a photo of our actual product: {product_name}. "
+        "Keep this EXACT product — same shape, color, texture, every detail identical. "
+        f"Only change the background and setting to: {scene}. "
+        "Professional Instagram product photography. Soft natural lighting. Clean composition. "
+        f"{_CLEAN_IMAGE_RULES}"
+    )
+
+
+async def _export_generated_image(page, generated_img, generated_src: str) -> bytes | None:
+    """Export the generated image, preferring Gemini's download over canvas capture."""
+    # Try Gemini's download button first — often cleaner than the on-screen preview.
+    try:
+        await generated_img.scroll_into_view_if_needed()
+        await generated_img.hover()
+        await page.wait_for_timeout(400)
+        download_btn = page.locator(
+            'button[aria-label*="Download"], button[aria-label*="download"], '
+            'button[data-tooltip*="Download"], button[data-tooltip*="download"]'
+        ).first
+        if await download_btn.is_visible(timeout=2000):
+            async with page.expect_download(timeout=15000) as download_info:
+                await download_btn.click()
+            download = await download_info.value
+            path = await download.path()
+            if path:
+                data = Path(path).read_bytes()
+                if data:
+                    logger.info("Exported image via Gemini download button")
+                    return data
+    except Exception as exc:
+        logger.debug("Gemini download button export failed: %s", exc)
+
+    try:
+        if generated_src.startswith("data:image"):
+            _, data = generated_src.split(",", 1)
+            logger.info("Decoded inline data-URI image")
+            return base64.b64decode(data)
+
+        handle = await generated_img.element_handle()
+        data_url: str = await page.evaluate(
+            """async (el) => {
+                if (!el.complete || el.naturalWidth === 0) {
+                    await el.decode().catch(() => {});
+                }
+                const w = el.naturalWidth  || el.width  || 1024;
+                const h = el.naturalHeight || el.height || 1024;
+                const canvas = document.createElement('canvas');
+                canvas.width  = w;
+                canvas.height = h;
+                canvas.getContext('2d').drawImage(el, 0, 0, w, h);
+                return canvas.toDataURL('image/png');
+            }""",
+            handle,
+        )
+        if data_url and "," in data_url:
+            _, data = data_url.split(",", 1)
+            logger.info("Exported image via canvas capture")
+            return base64.b64decode(data)
+    except Exception as exc:
+        logger.exception("Image export failed: %s", exc)
+    return None
 
 
 def _chrome_debug_available() -> bool:
@@ -173,6 +287,7 @@ async def _gemini_generate_with_browser(
     product_image_path: str | None,
     prompt: str,
     num_images: int = 1,
+    product_id: str = "",
 ) -> str:
     from playwright.async_api import async_playwright
 
@@ -368,43 +483,23 @@ async def _gemini_generate_with_browser(
                 await page.wait_for_timeout(500)
                 logger.info("Generated image found, src type: %s…", generated_src[:60])
 
-                # Export the full-resolution image by drawing the already-loaded
-                # <img> element onto an HTML canvas. This avoids any fetch/CORS
-                # issue with blob URLs — the pixels are already in browser memory.
                 try:
-                    img_bytes: bytes | None = None
-
-                    if generated_src.startswith("data:image"):
-                        _, data = generated_src.split(",", 1)
-                        img_bytes = base64.b64decode(data)
-                        logger.info("Decoded inline data-URI image")
-                    else:
-                        handle = await generated_img.element_handle()
-                        data_url: str = await page.evaluate(
-                            """async (el) => {
-                                // Wait until image has fully decoded
-                                if (!el.complete || el.naturalWidth === 0) {
-                                    await el.decode().catch(() => {});
-                                }
-                                const w = el.naturalWidth  || el.width  || 1024;
-                                const h = el.naturalHeight || el.height || 1024;
-                                const canvas = document.createElement('canvas');
-                                canvas.width  = w;
-                                canvas.height = h;
-                                canvas.getContext('2d').drawImage(el, 0, 0, w, h);
-                                return canvas.toDataURL('image/png');
-                            }""",
-                            handle,
-                        )
-                        if data_url and "," in data_url:
-                            _, data = data_url.split(",", 1)
-                            img_bytes = base64.b64decode(data)
+                    img_bytes = await _export_generated_image(
+                        page, generated_img, generated_src
+                    )
+                    if img_bytes:
+                        img_bytes = _strip_gemini_watermark(img_bytes)
 
                     if img_bytes:
                         filename = f"kb_gemini_{uuid.uuid4().hex[:8]}.png"
                         filepath = _OUTPUT_DIR / filename
                         filepath.write_bytes(img_bytes)
                         saved_paths.append(str(filepath))
+                        try:
+                            from .. import state
+                            state.set_last_image(str(filepath), product_id or "")
+                        except Exception:
+                            logger.debug("could not record last image", exc_info=True)
                         logger.info(
                             "Saved image (%d KB): %s",
                             len(img_bytes) // 1024,
@@ -484,29 +579,33 @@ async def _generate_image_gemini(args: dict[str, Any]) -> str:
         except Exception as exc:
             logger.warning("Could not load product: %s", exc)
 
-    brand_context = (
-        "For Khas Bazaar (خاص بازار), a Pakistani home decor brand. "
-        "Aesthetic: boho-chic, modern minimalist. Palette: nude, beige, white, gold. "
-    )
-
     if product_image_path:
-        full_prompt = (
-            f"{brand_context}"
-            f"I'm sharing a photo of our actual product: {product_name}. "
-            f"Keep this EXACT product — same shape, color, texture, every detail identical. "
-            f"Only change the background and setting to: "
-            f"{prompt if prompt else 'a beautiful boho lifestyle home setting'}. "
-            f"Professional Instagram product photography. Soft natural lighting. Clean composition."
+        full_prompt = _build_product_prompt(
+            product_name,
+            prompt or "a beautiful boho lifestyle home setting",
         )
     else:
-        full_prompt = f"{brand_context}{prompt}"
+        full_prompt = (
+            f"For Khas Bazaar (خاص بازار), a Pakistani home decor brand. {_BRAND_STYLE} "
+            f"{prompt} {_CLEAN_IMAGE_RULES}"
+        )
 
     logger.info("Starting Gemini browser generation for '%s'", product_name or prompt[:40])
-    return await _gemini_generate_with_browser(
+    result = await _gemini_generate_with_browser(
         product_image_path=product_image_path,
         prompt=full_prompt,
         num_images=num_images,
+        product_id=product_id,
     )
+    # Remember which product this image is for, so a later "post it on insta"
+    # can auto-generate a matching caption.
+    if product_id and "Generated" in result:
+        try:
+            from .. import state
+            state.set_last_image_product(product_id)
+        except Exception:
+            logger.debug("could not record last image product", exc_info=True)
+    return result
 
 
 MARKETING_REGISTRY.register(MarketingToolEntry(

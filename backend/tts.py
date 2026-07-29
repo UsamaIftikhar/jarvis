@@ -585,6 +585,7 @@ class PiperPythonClient:
     def __init__(self, model_path: str | None = None) -> None:
         raw = (model_path or os.environ.get("PIPER_MODEL", "")).strip()
         self.model_path = _resolve_path_maybe_relative(raw)
+        self.length_scale = float(os.environ.get("PIPER_LENGTH_SCALE", "0.9"))
         self._voice: object = None
         self._load_lock = threading.Lock()
 
@@ -608,8 +609,14 @@ class PiperPythonClient:
         return self._voice
 
     def _synthesize_blocking(self, text: str) -> list[bytes]:
+        from piper.config import SynthesisConfig  # type: ignore[import]
+
         voice = self._get_voice()
-        return [chunk.audio_int16_bytes for chunk in voice.synthesize(text)]  # type: ignore[attr-defined]
+        syn_config = SynthesisConfig(length_scale=self.length_scale)
+        return [
+            chunk.audio_int16_bytes
+            for chunk in voice.synthesize(text, syn_config=syn_config)  # type: ignore[attr-defined]
+        ]
 
     async def stream_pcm(self, text: str) -> AsyncIterator[bytes]:
         text = text.strip()
@@ -617,9 +624,15 @@ class PiperPythonClient:
             return
         logger.info("Piper: synthesizing (~%d chars)", len(text))
         pcm_chunks = await asyncio.to_thread(self._synthesize_blocking, text)
-        for chunk in pcm_chunks:
-            if chunk:
-                yield chunk
+        pcm = b"".join(ch for ch in pcm_chunks if ch)
+        if not pcm:
+            return
+        native_sr = _read_piper_model_sample_rate(self.model_path)
+        if native_sr != TTS_SAMPLE_RATE:
+            pcm = await asyncio.to_thread(_resample_int16_pcm, pcm, native_sr, TTS_SAMPLE_RATE)
+        step = 4096
+        for i in range(0, len(pcm), step):
+            yield pcm[i : i + step]
 
 
 async def warmup_piper_if_needed(client: ElevenLabsClient | PiperClient | PiperPythonClient | SayClient) -> None:
@@ -698,8 +711,12 @@ def build_tts_client() -> ElevenLabsClient | PiperPythonClient | PiperClient | S
     if provider == "piper":
         logger.info("TTS provider: piper-python (model=%s)", os.environ.get("PIPER_MODEL", ""))
         return PiperPythonClient()
-    if provider == "piper-cli":
-        logger.info("TTS provider: piper-cli (cmd=%s model=%s)", os.environ.get("PIPER_CMD", "piper"), os.environ.get("PIPER_MODEL", ""))
+    if provider in ("piper-cli",):
+        logger.info(
+            "TTS provider: piper-cli (cmd=%s model=%s)",
+            os.environ.get("PIPER_CMD", "piper"),
+            os.environ.get("PIPER_MODEL", ""),
+        )
         return PiperClient()
     logger.info("TTS provider: say (voice=%s)", os.environ.get("SAY_VOICE", "Daniel"))
     return SayClient()
