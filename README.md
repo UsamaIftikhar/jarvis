@@ -1,6 +1,6 @@
 # JARVIS
 
-Voice-controlled AI assistant desktop app inspired by Tony Stark's JARVIS.
+Open-source multimodal AI desktop agent with voice interaction, LLM reasoning, memory, tools, and a cross-platform Tauri interface.
 
 ## Stack
 
@@ -25,10 +25,10 @@ jarvis/
 ## Phase status
 
 - [x] **Phase 1** — Next.js shell + FastAPI WebSocket echo
-- [ ] **Phase 2** — Double-clap detection + state machine
-- [ ] **Phase 3** — Full voice pipeline (mic → STT → LLM → TTS → speakers)
-- [ ] **Phase 4** — Three.js animation states (LISTENING / THINKING / SPEAKING)
-- [ ] **Phase 5** — Tools (web/fs/calendar) + ChromaDB memory
+- [x] **Phase 2** — Double-clap detection + state machine
+- [x] **Phase 3** — Full voice pipeline (mic → STT → LLM → TTS → speakers)
+- [x] **Phase 4** — Three.js animation states (LISTENING / THINKING / SPEAKING)
+- [x] **Phase 5** — Tools (web/fs/calendar) + ChromaDB memory
 - [ ] **Phase 6** — Tauri packaging
 
 ## Running locally (Phase 1)
